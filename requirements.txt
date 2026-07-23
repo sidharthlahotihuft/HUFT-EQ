@@ -1,0 +1,17 @@
+Flask==3.0.3
+python-dotenv==1.0.1
+
+# --- Persistence (Supabase Postgres + Storage) ---
+supabase==2.7.4
+
+# --- Transcription ---
+openai==1.44.0          # OpenAI Whisper API transcription (needs OPENAI_API_KEY) - required on Vercel
+
+# --- AI Scoring (optional, otherwise heuristic fallback is used) ---
+anthropic==0.34.2       # for Claude-based scoring (needs ANTHROPIC_API_KEY)
+
+# NOTE: faster-whisper (local/offline Whisper) is intentionally NOT listed here.
+# It pulls in large native binaries that risk exceeding Vercel's function bundle
+# size limit. If you want it for local-only dev, install it separately:
+#   pip install faster-whisper
+# transcribe.py already supports it as an automatic fallback when present.

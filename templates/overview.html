@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Overview · HUFT EQ{% endblock %}
+{% block content %}
+
+<h1 class="page-title">Overview</h1>
+<p class="subtitle">Summary across all scored calls · <a href="{{ url_for('index') }}">&larr; Upload another call</a></p>
+
+{% if not calls %}
+<div class="card"><div class="empty-state">No scored calls yet. Upload and score a call to see the overview.</div></div>
+{% else %}
+
+<div class="stat-grid">
+  <div class="stat-card"><div class="val">{{ total_calls }}</div><div class="lbl">Calls Scored</div></div>
+  <div class="stat-card"><div class="val">{{ avg_total }}</div><div class="lbl">Avg Score / {{ max_total }}</div></div>
+  <div class="stat-card"><div class="val">{{ pass_count }}/{{ total_calls }}</div><div class="lbl">≥ 70 (Pass)</div></div>
+  <div class="stat-card"><div class="val">{{ calls[0].grade if calls else '—' }}</div><div class="lbl">Top Grade</div></div>
+</div>
+
+<div class="card">
+  <h2>Ranking</h2>
+  <table>
+    <thead><tr><th>#</th><th>Call</th><th>Agent</th><th>Date</th><th>Score</th><th>Grade</th><th></th></tr></thead>
+    <tbody>
+      {% for c in calls %}
+      <tr>
+        <td><span class="rank-num">{{ loop.index }}</span></td>
+        <td>{{ c.original_name }}{% if c.call_topic %}<br><span style="color:var(--gray); font-size:12px;">{{ c.call_topic }}</span>{% endif %}</td>
+        <td>{{ c.agent_name or '—' }}</td>
+        <td>{{ c.call_date or '—' }}</td>
+        <td class="score-cell">{{ '%.1f'|format(c.total_score) }}/{{ c.max_score|int }}</td>
+        <td class="score-cell">{{ c.grade }}</td>
+        <td><a class="btn secondary" href="{{ url_for('report_card', call_id=c.id) }}">View</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Average Score by Parameter</h2>
+  <canvas id="paramChart" height="110"></canvas>
+</div>
+
+<div class="card">
+  <h2>Parameter Breakdown (avg across all calls)</h2>
+  <table>
+    <thead><tr><th>Criterion</th><th>Avg Score</th><th>%</th></tr></thead>
+    <tbody>
+      {% for p in param_avgs %}
+      <tr class="band-{{ p.band }}">
+        <td>{{ p.label }}</td>
+        <td class="score-cell">{{ p.avg }}/{{ p.max }}</td>
+        <td class="score-cell">{{ p.pct }}%</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script>
+  const labels = {{ param_avgs|map(attribute='label')|list|tojson }};
+  const pcts = {{ param_avgs|map(attribute='pct')|list|tojson }};
+  const colors = pcts.map(p => p >= 80 ? '#1c6b32' : (p >= 50 ? '#8a6300' : '#a3221a'));
+  new Chart(document.getElementById('paramChart'), {
+    type: 'bar',
+    data: { labels: labels, datasets: [{ label: '% of max', data: pcts, backgroundColor: colors }] },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, max: 100 }, x: { ticks: { autoSkip: false, maxRotation: 60, minRotation: 45, font: { size: 10 } } } }
+    }
+  });
+</script>
+
+{% endif %}
+{% endblock %}

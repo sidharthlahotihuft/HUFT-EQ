@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}HUFT EQ · {{ call.original_name }}{% endblock %}
+{% block content %}
+
+<h1 class="page-title">Customer Service Call — Report Card</h1>
+<p class="subtitle">HUFT Customer Care · Scored against the Voice Rubric (100 pts) · <a href="{{ url_for('index') }}">&larr; Back to Upload</a> · <a href="{{ url_for('overview') }}">Overview →</a></p>
+
+<div class="card">
+  <div class="meta-list">
+    <div><b>File:</b> {{ call.original_name }}</div>
+    <div><b>Agent:</b> {{ call.agent_name or '—' }}</div>
+    <div><b>Call Date:</b> {{ call.call_date or '—' }}</div>
+    {% if call.call_topic %}<div><b>Topic:</b> {{ call.call_topic }}</div>{% endif %}
+    <div><b>Status:</b> <span class="pill status-{{ call.status }}">{{ call.status_message or call.status }}</span></div>
+    {% if call.scoring_method %}<div><b>Scoring method:</b> <span class="method-tag">{{ call.scoring_method }}</span></div>{% endif %}
+  </div>
+</div>
+
+{% if call.status != 'done' %}
+<div class="card" id="processing-card">
+  <h2>Processing…</h2>
+  <p>{{ call.status_message or 'Working on it…' }}</p>
+  <p style="color: var(--gray); font-size: 13px;">This page will refresh automatically once scoring is complete.</p>
+</div>
+<script>
+  // No background jobs on Vercel (functions are stateless) - the browser drives
+  // the pipeline itself with short, idempotent calls. Reloading this page at
+  // any point just resumes from whatever `status` currently is.
+  const callId = {{ call.id }};
+  const statusEl = document.querySelector('#processing-card p');
+
+  async function step(url) {
+    const res = await fetch(url, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request to ${url} failed.`);
+    return data;
+  }
+
+  async function run() {
+    try {
+      const status = "{{ call.status }}";
+      if (status === 'uploaded' || status === 'transcribing') {
+        statusEl.textContent = 'Transcribing audio with Whisper…';
+        await step(`/api/process/transcribe/${callId}`);
+      }
+      statusEl.textContent = 'Scoring call against the Voice rubric…';
+      await step(`/api/process/score/${callId}`);
+    } catch (err) {
+      statusEl.textContent = 'Something went wrong: ' + err.message + ' — reloading…';
+    } finally {
+      setTimeout(() => window.location.reload(), 600);
+    }
+  }
+  run();
+</script>
+{% else %}
+
+<div class="card">
+  <div class="score-hero">
+    <div class="score-circle {{ 'good' if pct >= 80 else ('warn' if pct >= 50 else 'bad') }}">
+      <div class="num">{{ '%.0f'|format(call.total_score) }}</div>
+      <div class="den">/ {{ max_total }}</div>
+    </div>
+    <div>
+      <div class="grade-badge">{{ call.grade }}</div>
+      <div style="color: var(--gray); font-size: 13px;">Overall {{ '%.1f'|format(pct) }}%</div>
+    </div>
+    {% if recs %}
+    <div style="flex:1; min-width: 260px;">
+      <b style="font-size:13px; color: var(--navy);">Top coaching priorities:</b>
+      <ul style="margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--gray);">
+        {% for r in recs %}<li>{{ r.label }} ({{ r.pct|int }}%)</li>{% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% if recs %}
+<div class="card">
+  <h2>Recommendations</h2>
+  <ul class="recs">
+    {% for r in recs %}
+    <li><b>{{ r.label }} — {{ r.pct|int }}%</b>{{ r.tip }}{% if r.evidence %} <em>({{ r.evidence }})</em>{% endif %}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Scorecard <span style="font-weight:400; color:var(--gray); font-size:12px;">— edit any score or evidence, then Save Changes</span></h2>
+  <form method="POST" action="{{ url_for('update_call', call_id=call.id) }}">
+    <table>
+      <thead>
+        <tr><th style="width:22%">Criterion</th><th style="width:10%">Score</th><th>Evidence &amp; Notes</th></tr>
+      </thead>
+      <tbody>
+        {% set ns = namespace(last_group='') %}
+        {% for row in rows %}
+          {% if row.group != ns.last_group %}
+          <tr class="group-row"><td colspan="3">{{ row.group }}</td></tr>
+          {% set ns.last_group = row.group %}
+          {% endif %}
+          <tr class="band-{{ row.band }}">
+            <td>{{ row.label }}</td>
+            <td class="score-cell">
+              <input class="score-input" type="number" step="0.5" min="0" max="{{ row.max }}"
+                     name="score_{{ row.key }}" value="{{ row.score }}"> / {{ row.max }}
+            </td>
+            <td>
+              <textarea class="evidence-input" name="evidence_{{ row.key }}" rows="2">{{ row.evidence }}</textarea>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div style="margin-top:16px;">
+      <button type="submit" class="btn">Save Changes</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Transcript</h2>
+  <div class="transcript-box">{{ call.transcript }}</div>
+</div>
+
+{% endif %}
+{% endblock %}
