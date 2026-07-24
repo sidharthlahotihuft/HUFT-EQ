@@ -1,21 +1,120 @@
 """
-Audio transcription for the CS Call Quality Portal.
+Audio transcription for the HUFT CS Call Quality Portal.
 
-Preference order:
+Accuracy is the whole point here: a bad transcript makes every downstream
+score wrong. So this module does four things beyond a naive Whisper call, each
+targeting a common failure mode on real support-call audio:
+
+  1. Domain prompt  - Whisper is given a hint listing the brand name and the
+     vocabulary that shows up on HUFT calls (products, actions, Hindi/English
+     support terms) so it stops mishearing "Head Up For Tails", product names,
+     order IDs, agent names, etc. See WHISPER_PROMPT / DEFAULT_PROMPT below.
+  2. Language hint  - support calls are often Hinglish (Hindi + English mixed).
+     Set WHISPER_LANGUAGE ("en", "hi", ...) to stop Whisper guessing wrong on
+     short/noisy clips. Left blank = auto-detect (best for genuinely mixed calls).
+  3. temperature=0  - deterministic decoding. The default (non-zero) sampling
+     is what produces looped/repeated phrases and invented words on silence.
+  4. Long-call handling - the OpenAI Whisper API rejects files over 25MB.
+     Longer recordings are automatically split into overlapping chunks (when
+     ffmpeg/pydub are available) and stitched back together, with each chunk
+     primed by the tail of the previous one so wording stays consistent.
+
+Backend preference order:
   1. OpenAI Whisper API ("whisper-1") if OPENAI_API_KEY is set - fast, accurate,
      handles most audio formats directly, no local model download.
-  2. faster-whisper (local, offline, CPU-friendly reimplementation of Whisper)
-     if the `faster_whisper` package is installed - no API key needed, but
-     downloads a model (~150MB for "base") on first use and requires ffmpeg.
+  2. faster-whisper (local, offline) if the `faster_whisper` package is
+     installed - no API key needed, downloads a model on first use, needs ffmpeg.
   3. Otherwise, raises a clear error telling the user how to enable one path.
 """
 import os
 
 _local_model = None  # lazy-loaded faster_whisper model, cached across calls
 
+# OpenAI's Whisper API hard-rejects uploads larger than 25MB. Stay a little
+# under it to leave room for multipart overhead.
+_MAX_API_BYTES = 24 * 1024 * 1024
+
+# Default domain prompt. Whisper uses this as a style/vocabulary hint (max ~224
+# tokens are actually used). List real names/terms so they're transcribed
+# correctly instead of phonetically. Override with the WHISPER_PROMPT env var,
+# and ideally extend it with your actual agent names and top product names.
+DEFAULT_PROMPT = (
+    "Head Up For Tails (HUFT) customer care call. "
+    "Topics: order, delivery, refund, return, replacement, exchange, "
+    "subscription, grooming, appointment, vet, pet food, kibble, treats, "
+    "collar, leash, harness, bed, shampoo, order ID, tracking, courier, "
+    "prepaid, COD, wallet, coupon, loyalty points, cancellation. "
+    "Speakers: customer care agent and customer. Hindi and English are mixed."
+)
+
 
 class TranscriptionError(RuntimeError):
     pass
+
+
+def _whisper_language():
+    lang = (os.environ.get("WHISPER_LANGUAGE") or "").strip()
+    return lang or None  # None -> let Whisper auto-detect
+
+
+def _whisper_prompt():
+    # Explicit empty string ("WHISPER_PROMPT=") disables the prompt; unset uses default.
+    val = os.environ.get("WHISPER_PROMPT")
+    if val is None:
+        return DEFAULT_PROMPT
+    val = val.strip()
+    return val or None
+
+
+def _whisper_temperature():
+    try:
+        return float(os.environ.get("WHISPER_TEMPERATURE", "0"))
+    except ValueError:
+        return 0.0
+
+
+def _call_openai_whisper(client, audio_path, model, prompt):
+    """One API call for a single (already size-checked) file."""
+    kwargs = {
+        "model": model,
+        "temperature": _whisper_temperature(),
+    }
+    lang = _whisper_language()
+    if lang:
+        kwargs["language"] = lang
+    if prompt:
+        kwargs["prompt"] = prompt
+    with open(audio_path, "rb") as f:
+        resp = client.audio.transcriptions.create(file=f, **kwargs)
+    return (resp.text or "").strip()
+
+
+def _split_audio(audio_path, chunk_ms=10 * 60 * 1000, overlap_ms=3000):
+    """Split a large file into <=chunk_ms segments (with small overlap) as temp
+    wav files. Returns a list of paths, or None if pydub/ffmpeg aren't available."""
+    try:
+        from pydub import AudioSegment
+    except Exception:
+        return None
+    try:
+        audio = AudioSegment.from_file(audio_path)
+    except Exception:
+        return None  # ffmpeg missing or unreadable format
+    import tempfile
+    paths = []
+    start = 0
+    length = len(audio)
+    while start < length:
+        end = min(start + chunk_ms, length)
+        seg = audio[start:end]
+        fd, p = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        seg.export(p, format="wav")
+        paths.append(p)
+        if end >= length:
+            break
+        start = end - overlap_ms  # small overlap so words on the boundary aren't lost
+    return paths
 
 
 def _transcribe_with_openai_api(audio_path):
@@ -27,12 +126,37 @@ def _transcribe_with_openai_api(audio_path):
     except ImportError:
         return None
     client = OpenAI(api_key=api_key)
-    with open(audio_path, "rb") as f:
-        resp = client.audio.transcriptions.create(
-            model=os.environ.get("OPENAI_WHISPER_MODEL", "whisper-1"),
-            file=f,
+    model = os.environ.get("OPENAI_WHISPER_MODEL", "whisper-1")
+    base_prompt = _whisper_prompt()
+
+    size = os.path.getsize(audio_path)
+    if size <= _MAX_API_BYTES:
+        return _call_openai_whisper(client, audio_path, model, base_prompt)
+
+    # Too big for one API call -> chunk it.
+    chunks = _split_audio(audio_path)
+    if not chunks:
+        raise TranscriptionError(
+            f"Audio is {size / 1024 / 1024:.1f}MB, over the 25MB Whisper API "
+            "limit, and it can't be auto-split here (ffmpeg/pydub not available). "
+            "Install ffmpeg + `pip install pydub`, or upload a shorter/compressed "
+            "recording (e.g. 64kbps mono MP3)."
         )
-    return resp.text
+    parts = []
+    try:
+        for p in chunks:
+            # Prime each chunk with the brand prompt + the tail of what we've
+            # transcribed so far, so names and phrasing stay consistent.
+            tail = " ".join(" ".join(parts).split()[-40:])
+            prompt = (base_prompt or "")
+            if tail:
+                prompt = f"{prompt} {tail}".strip()
+            parts.append(_call_openai_whisper(client, p, model, prompt or None))
+    finally:
+        for p in chunks:
+            if os.path.exists(p):
+                os.remove(p)
+    return " ".join(t for t in parts if t).strip()
 
 
 def _transcribe_with_faster_whisper(audio_path):
@@ -45,7 +169,14 @@ def _transcribe_with_faster_whisper(audio_path):
         model_size = os.environ.get("FASTER_WHISPER_MODEL", "base")
         compute_type = os.environ.get("FASTER_WHISPER_COMPUTE", "int8")
         _local_model = WhisperModel(model_size, compute_type=compute_type)
-    segments, _info = _local_model.transcribe(audio_path, beam_size=5)
+    segments, _info = _local_model.transcribe(
+        audio_path,
+        beam_size=5,
+        temperature=0,
+        language=_whisper_language(),      # None -> auto-detect
+        initial_prompt=_whisper_prompt(),  # same domain vocabulary hint
+        vad_filter=True,                   # skip long silences -> fewer hallucinations
+    )
     return " ".join(seg.text.strip() for seg in segments).strip()
 
 
@@ -54,6 +185,8 @@ def transcribe(audio_path):
     for fn in (_transcribe_with_openai_api, _transcribe_with_faster_whisper):
         try:
             text = fn(audio_path)
+        except TranscriptionError:
+            raise
         except Exception as e:  # noqa: BLE001
             raise TranscriptionError(f"{fn.__name__} failed: {e}") from e
         if text:
