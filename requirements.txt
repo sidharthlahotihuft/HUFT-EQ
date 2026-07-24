@@ -5,7 +5,9 @@ python-dotenv==1.0.1
 supabase==2.7.4
 
 # --- Transcription ---
-openai==1.44.0          # OpenAI Whisper API transcription (needs OPENAI_API_KEY) - required on Vercel
+requests==2.32.3        # Deepgram Nova-3 API calls (transcription + speaker diarization)
+openai==1.44.0          # OpenAI Whisper API fallback (needs OPENAI_API_KEY)
+indic-transliteration==2.3.61   # romanize Hindi (Devanagari) -> Latin "Hinglish" in transcripts (WHISPER_ROMANIZE)
 
 # --- AI Scoring (optional, otherwise heuristic fallback is used) ---
 anthropic==0.34.2       # for Claude-based scoring (needs ANTHROPIC_API_KEY)

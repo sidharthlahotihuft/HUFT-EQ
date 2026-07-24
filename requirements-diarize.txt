@@ -1,0 +1,15 @@
+# Heavy dependencies for LOCAL / worker-side voice diarization (diarize.py).
+# Do NOT add these to the main requirements.txt - they are far too large for
+# Vercel's serverless functions. Install these only where diarization runs
+# (your Mac or a dedicated worker/GPU box).
+#
+#   pip install -r requirements-diarize.txt
+#
+# On Apple Silicon Macs this works on CPU (slower); a CUDA GPU is much faster.
+
+faster-whisper==1.0.3
+pyannote.audio==3.3.2
+torch>=2.2
+torchaudio>=2.2
+indic-transliteration==2.3.61   # romanize Hindi -> Hinglish (shared with the portal)
+python-dotenv==1.0.1

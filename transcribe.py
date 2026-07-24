@@ -51,6 +51,46 @@ DEFAULT_PROMPT = (
     "prepaid, COD, wallet, coupon, loyalty points, cancellation"
 )
 
+# When WHISPER_ROMANIZE is on we want Hindi written in the Latin alphabet the way
+# people actually type Hinglish, not in Devanagari. Whisper tends to mimic the
+# SCRIPT of its prompt, so a romanized-Hinglish keyword prompt nudges the whole
+# transcript to come out romanized. Any Devanagari that still slips through is
+# converted afterward by _romanize() as a safety net. Still a keyword list (no
+# full sentences) so it can't be parroted into a fake transcript.
+DEFAULT_PROMPT_ROMANIZED = (
+    "Head Up For Tails, HUFT, namaste sir, ji haan, theek hai, aapka order, "
+    "delivery kahan hai, refund, return, replacement, exchange, cancel, "
+    "grooming appointment, pet food, kibble, treats, collar, leash, order ID, "
+    "tracking, courier, prepaid, COD, coupon, main aapki madad karta hun, "
+    "ek minute, ho jayega, dhanyavaad"
+)
+
+
+def _romanize_enabled():
+    return (os.environ.get("WHISPER_ROMANIZE", "1").strip().lower()
+            in ("1", "true", "yes", "on"))
+
+
+def _romanize(text):
+    """Convert any Devanagari spans in `text` to Latin (Hinglish). Latin/English
+    text is left exactly as-is. This is a safety net - most output should already
+    be romanized thanks to the romanized prompt. Returns text unchanged if the
+    transliteration library isn't installed (so it degrades gracefully)."""
+    if not text:
+        return text
+    import re
+    if not re.search(r"[ऀ-ॿ]", text):
+        return text  # nothing in Devanagari, skip
+    try:
+        from indic_transliteration import sanscript
+        from indic_transliteration.sanscript import transliterate
+    except Exception:
+        return text  # library missing -> leave Devanagari as-is rather than crash
+    scheme = getattr(sanscript, os.environ.get("ROMANIZE_SCHEME", "OPTITRANS"),
+                     sanscript.OPTITRANS)
+    dev = re.compile(r"[ऀ-ॿ]+")
+    return dev.sub(lambda m: transliterate(m.group(0), sanscript.DEVANAGARI, scheme), text)
+
 
 def _looks_like_hallucination(text):
     """Whisper loops a short phrase when it can't find real speech (silence,
@@ -86,10 +126,11 @@ def _whisper_language():
 
 
 def _whisper_prompt():
-    # Explicit empty string ("WHISPER_PROMPT=") disables the prompt; unset uses default.
+    # Explicit empty string ("WHISPER_PROMPT=") disables the prompt; unset uses
+    # the default (romanized variant when WHISPER_ROMANIZE is on).
     val = os.environ.get("WHISPER_PROMPT")
     if val is None:
-        return DEFAULT_PROMPT
+        return DEFAULT_PROMPT_ROMANIZED if _romanize_enabled() else DEFAULT_PROMPT
     val = val.strip()
     return val or None
 
@@ -143,6 +184,22 @@ def _split_audio(audio_path, chunk_ms=10 * 60 * 1000, overlap_ms=3000):
             break
         start = end - overlap_ms  # small overlap so words on the boundary aren't lost
     return paths
+
+
+def _transcribe_with_deepgram(audio_path):
+    """Preferred backend: Deepgram Nova-3 does verbatim transcription AND speaker
+    diarization (HUFT Agent / Customer labels) in one call, tuned for Hinglish.
+    Returns None when DEEPGRAM_API_KEY isn't set, so the Whisper paths still work."""
+    if not os.environ.get("DEEPGRAM_API_KEY"):
+        return None
+    try:
+        from transcribe_deepgram import transcribe_deepgram, DeepgramError
+    except ImportError:
+        return None
+    try:
+        return transcribe_deepgram(audio_path)
+    except DeepgramError as e:
+        raise TranscriptionError(str(e)) from e
 
 
 def _transcribe_with_openai_api(audio_path):
@@ -210,7 +267,7 @@ def _transcribe_with_faster_whisper(audio_path):
 
 def transcribe(audio_path):
     """Returns the transcript text for the given audio file path."""
-    for fn in (_transcribe_with_openai_api, _transcribe_with_faster_whisper):
+    for fn in (_transcribe_with_deepgram, _transcribe_with_openai_api, _transcribe_with_faster_whisper):
         try:
             text = fn(audio_path)
         except TranscriptionError:
@@ -218,6 +275,8 @@ def transcribe(audio_path):
         except Exception as e:  # noqa: BLE001
             raise TranscriptionError(f"{fn.__name__} failed: {e}") from e
         if text:
+            if _romanize_enabled():
+                text = _romanize(text)
             if _looks_like_hallucination(text):
                 raise TranscriptionError(
                     "Transcription produced looped/repeated text, which means "
