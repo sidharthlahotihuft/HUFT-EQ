@@ -38,14 +38,42 @@ _MAX_API_BYTES = 24 * 1024 * 1024
 # tokens are actually used). List real names/terms so they're transcribed
 # correctly instead of phonetically. Override with the WHISPER_PROMPT env var,
 # and ideally extend it with your actual agent names and top product names.
+# IMPORTANT: keep this a bare comma-separated vocabulary list, NOT full
+# sentences. Whisper echoes its prompt when the audio has no clear speech, and
+# a prompt made of grammatical sentences gets parroted back as a fluent-looking
+# (but fake) transcript. A keyword list can't be looped into a plausible
+# sentence, so silent/empty audio yields little or nothing instead of garbage,
+# and the hallucination guard below can then catch it.
 DEFAULT_PROMPT = (
-    "Head Up For Tails (HUFT) customer care call. "
-    "Topics: order, delivery, refund, return, replacement, exchange, "
-    "subscription, grooming, appointment, vet, pet food, kibble, treats, "
-    "collar, leash, harness, bed, shampoo, order ID, tracking, courier, "
-    "prepaid, COD, wallet, coupon, loyalty points, cancellation. "
-    "Speakers: customer care agent and customer. Hindi and English are mixed."
+    "Head Up For Tails, HUFT, order, delivery, refund, return, replacement, "
+    "exchange, subscription, grooming, appointment, vet, pet food, kibble, "
+    "treats, collar, leash, harness, bed, shampoo, order ID, tracking, courier, "
+    "prepaid, COD, wallet, coupon, loyalty points, cancellation"
 )
+
+
+def _looks_like_hallucination(text):
+    """Whisper loops a short phrase when it can't find real speech (silence,
+    hold music, corrupt/empty audio). Detect that so we fail loudly instead of
+    feeding looped garbage into scoring. Returns True if the text is dominated
+    by one repeated phrase."""
+    if not text:
+        return False
+    words = text.split()
+    if len(words) < 30:
+        return False  # too short to judge; let it through
+    # Compare the set of distinct sentences to the total: heavy repetition means
+    # very few distinct sentences relative to how many there are.
+    import re
+    sentences = [s.strip().lower() for s in re.split(r"[.!?]+", text) if s.strip()]
+    if len(sentences) >= 5:
+        distinct = set(sentences)
+        if len(distinct) / len(sentences) < 0.25:
+            return True
+    # Also catch low overall vocabulary diversity (same few words on a loop).
+    if len(set(w.lower() for w in words)) / len(words) < 0.12:
+        return True
+    return False
 
 
 class TranscriptionError(RuntimeError):
@@ -190,6 +218,17 @@ def transcribe(audio_path):
         except Exception as e:  # noqa: BLE001
             raise TranscriptionError(f"{fn.__name__} failed: {e}") from e
         if text:
+            if _looks_like_hallucination(text):
+                raise TranscriptionError(
+                    "Transcription produced looped/repeated text, which means "
+                    "Whisper couldn't find clear speech in the audio. Common "
+                    "causes: the recording is silent or near-silent, it's mostly "
+                    "hold music/ringing, the volume is extremely low, or the file "
+                    "is corrupt or in an unexpected format. Check that this call's "
+                    "audio actually plays and contains audible conversation, then "
+                    "re-run. (If it's a real but very quiet call, try normalizing/"
+                    "amplifying the audio before upload.)"
+                )
             return text
     raise TranscriptionError(
         "No transcription backend available. Set OPENAI_API_KEY (Vercel/Supabase deploys "
