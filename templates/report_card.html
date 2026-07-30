@@ -1,16 +1,39 @@
 {% extends "base.html" %}
-{% block title %}HUFT EQ · {{ call.original_name }}{% endblock %}
+{% block title %}HUFT Care · {{ call.original_name }}{% endblock %}
+{% block head %}
+<style>
+  .assessment { font-size: 16px; line-height: 1.5; color: var(--ink); }
+  .band-pill { display:inline-block; padding:4px 12px; border-radius:999px; font-weight:600; font-size:13px; }
+  .band-Excellent,.band-Strong { background:var(--good-bg); color:var(--good-text); }
+  .band-Adequate { background:var(--warn-bg); color:var(--warn-text); }
+  .band-Weak,.band-Unacceptable,.band-Critical,.band-High { background:var(--bad-bg); color:var(--bad-text); }
+  .band-Insufficient,.band-Not { background:var(--gray-light); color:var(--gray); }
+  .dim-score-num { font-weight:700; font-size:15px; }
+  .conf { color:var(--gray); font-size:11px; }
+  .sev { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:700; text-transform:uppercase; }
+  .sev-critical,.sev-high { background:var(--bad-bg); color:var(--bad-text); }
+  .sev-medium { background:var(--warn-bg); color:var(--warn-text); }
+  .sev-coaching { background:var(--gray-light); color:var(--gray); }
+  .alert-banner { border-left:4px solid var(--bad-text); background:var(--bad-bg); color:var(--bad-text); padding:12px 16px; border-radius:6px; margin-bottom:16px; font-weight:600; }
+  .kv { display:grid; grid-template-columns:180px 1fr; gap:6px 14px; font-size:14px; }
+  .kv b { color:var(--navy); }
+  .na-row td { opacity:0.55; }
+  .chip { display:inline-block; background:var(--blue-light); color:var(--blue); padding:3px 10px; border-radius:999px; font-size:12px; font-weight:600; }
+  .twocol { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:720px){ .twocol{ grid-template-columns:1fr; } .kv{ grid-template-columns:120px 1fr; } }
+</style>
+{% endblock %}
 {% block content %}
 
-<h1 class="page-title">Customer Service Call — Report Card</h1>
-<p class="subtitle">HUFT Customer Care · Scored against the Voice Rubric (100 pts) · <a href="{{ url_for('index') }}">&larr; Back to Upload</a> · <a href="{{ url_for('overview') }}">Overview →</a></p>
+<h1 class="page-title">HUFT Care — Call Report</h1>
+<p class="subtitle">Six-dimension care evaluation · <a href="{{ url_for('index') }}">&larr; Upload</a> · <a href="{{ url_for('overview') }}">Overview →</a></p>
 
 <div class="card">
   <div class="meta-list">
     <div><b>File:</b> {{ call.original_name }}</div>
     <div><b>Agent:</b> {{ call.agent_name or '—' }}</div>
     <div><b>Call Date:</b> {{ call.call_date or '—' }}</div>
-    {% if call.call_topic %}<div><b>Topic:</b> {{ call.call_topic }}</div>{% endif %}
+    {% if result.scenario %}<div><b>Scenario:</b> {{ result.scenario }}</div>{% endif %}
     <div><b>Status:</b> <span class="pill status-{{ call.status }}">{{ call.status_message or call.status }}</span></div>
     {% if call.scoring_method %}<div><b>Scoring method:</b> <span class="method-tag">{{ call.scoring_method }}</span></div>{% endif %}
   </div>
@@ -20,30 +43,25 @@
 <div class="card" id="processing-card">
   <h2>Processing…</h2>
   <p>{{ call.status_message or 'Working on it…' }}</p>
-  <p style="color: var(--gray); font-size: 13px;">This page will refresh automatically once scoring is complete.</p>
+  <p style="color: var(--gray); font-size: 13px;">This page refreshes automatically once scoring is complete.</p>
 </div>
 <script>
-  // No background jobs on Vercel (functions are stateless) - the browser drives
-  // the pipeline itself with short, idempotent calls. Reloading this page at
-  // any point just resumes from whatever `status` currently is.
   const callId = {{ call.id }};
   const statusEl = document.querySelector('#processing-card p');
-
   async function step(url) {
     const res = await fetch(url, { method: 'POST' });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `Request to ${url} failed.`);
     return data;
   }
-
   async function run() {
     try {
       const status = "{{ call.status }}";
       if (status === 'uploaded' || status === 'transcribing') {
-        statusEl.textContent = 'Transcribing audio with Whisper…';
+        statusEl.textContent = 'Transcribing audio…';
         await step(`/api/process/transcribe/${callId}`);
       }
-      statusEl.textContent = 'Scoring call against the Voice rubric…';
+      statusEl.textContent = 'Scoring against the HUFT Care model…';
       await step(`/api/process/score/${callId}`);
     } catch (err) {
       statusEl.textContent = 'Something went wrong: ' + err.message + ' — reloading…';
@@ -55,74 +73,131 @@
 </script>
 {% else %}
 
+{% set band = call.grade or result.rating_band or 'Not scored' %}
+{% set bandclass = 'band-' + (band.split(' ')[0]) %}
+
+{% if result.critical_failure or result.high_severity_failure %}
+<div class="alert-banner">
+  ⚠️ {{ 'Critical failure flagged' if result.critical_failure else 'High-severity issue flagged' }} —
+  score capped and routed for human review. This must not be averaged away.
+</div>
+{% endif %}
+
 <div class="card">
   <div class="score-hero">
-    <div class="score-circle {{ 'good' if pct >= 80 else ('warn' if pct >= 50 else 'bad') }}">
-      <div class="num">{{ '%.0f'|format(call.total_score) }}</div>
-      <div class="den">/ {{ max_total }}</div>
+    <div class="score-circle {{ 'good' if (call.total_score or 0) >= 3.5 else ('warn' if (call.total_score or 0) >= 2.5 else 'bad') }}">
+      {% if call.total_score is not none %}
+      <div class="num">{{ '%.2f'|format(call.total_score) }}</div>
+      <div class="den">/ {{ max_score|int }}</div>
+      {% else %}
+      <div class="num" style="font-size:20px;">N/A</div>
+      {% endif %}
     </div>
-    <div>
-      <div class="grade-badge">{{ call.grade }}</div>
-      <div style="color: var(--gray); font-size: 13px;">Overall {{ '%.1f'|format(pct) }}%</div>
+    <div style="flex:1; min-width:240px;">
+      <div><span class="band-pill {{ bandclass }}">{{ band }}</span></div>
+      {% if result.one_line_assessment %}
+      <p class="assessment" style="margin:10px 0 0;">{{ result.one_line_assessment }}</p>
+      {% endif %}
+      {% if result.coaching_tag %}<div style="margin-top:10px;"><span class="chip">Coaching: {{ result.coaching_tag }}</span></div>{% endif %}
     </div>
-    {% if recs %}
-    <div style="flex:1; min-width: 260px;">
-      <b style="font-size:13px; color: var(--navy);">Top coaching priorities:</b>
-      <ul style="margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--gray);">
-        {% for r in recs %}<li>{{ r.label }} ({{ r.pct|int }}%)</li>{% endfor %}
-      </ul>
-    </div>
-    {% endif %}
   </div>
 </div>
 
-{% if recs %}
+<div class="twocol">
+  <div class="card">
+    <h2>What went well</h2>
+    {% if result.what_went_well %}
+    <ul class="recs">{% for w in result.what_went_well %}<li>{{ w }}</li>{% endfor %}</ul>
+    {% else %}<p style="color:var(--gray)">—</p>{% endif %}
+  </div>
+  <div class="card">
+    <h2>Biggest missed moment</h2>
+    {% if result.biggest_missed_moment and result.biggest_missed_moment.summary %}
+    <p>{{ result.biggest_missed_moment.summary }}
+       {% if result.biggest_missed_moment.timestamp %}<span class="conf">[{{ result.biggest_missed_moment.timestamp }}]</span>{% endif %}</p>
+    {% if result.try_instead %}<p style="margin-top:8px;"><b>Try instead:</b> “{{ result.try_instead }}”</p>{% endif %}
+    {% else %}<p style="color:var(--gray)">—</p>{% endif %}
+  </div>
+</div>
+
 <div class="card">
-  <h2>Recommendations</h2>
-  <ul class="recs">
-    {% for r in recs %}
-    <li><b>{{ r.label }} — {{ r.pct|int }}%</b>{{ r.tip }}{% if r.evidence %} <em>({{ r.evidence }})</em>{% endif %}</li>
+  <h2>Resolution, policy &amp; commitments</h2>
+  <div class="kv">
+    <b>Resolution status</b><span>{{ result.resolution_status or '—' }}</span>
+    <b>Policy check</b><span>{{ result.policy_check.status or '—' }}{% if result.policy_check.note %} — {{ result.policy_check.note }}{% endif %}</span>
+    <b>Failure attribution</b><span>{{ result.failure_attribution or '—' }}</span>
+  </div>
+  {% if result.commitments %}
+  <table style="margin-top:12px;">
+    <thead><tr><th>Action</th><th>Owner</th><th>Due</th><th>In ticket?</th></tr></thead>
+    <tbody>
+      {% for c in result.commitments %}
+      <tr><td>{{ c.action }}</td><td>{{ c.owner }}</td><td>{{ c.due }}</td><td>{{ c.in_ticket }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+
+{% if result.risks_alerts %}
+<div class="card">
+  <h2>Risks &amp; alerts</h2>
+  <ul style="list-style:none; padding:0; margin:0;">
+    {% for r in result.risks_alerts %}
+    <li style="margin-bottom:10px;">
+      <span class="sev sev-{{ r.severity }}">{{ r.severity }}</span>
+      <b>{{ r.summary }}</b>
+      {% if r.evidence %}<div class="conf">{{ r.evidence }}</div>{% endif %}
+    </li>
     {% endfor %}
   </ul>
 </div>
 {% endif %}
 
 <div class="card">
-  <h2>Scorecard <span style="font-weight:400; color:var(--gray); font-size:12px;">— edit any score or evidence, then Save Changes</span></h2>
+  <h2>Care dimensions
+    <span style="font-weight:400; color:var(--gray); font-size:12px;">— scored 1–5; untick “Applies” to mark N/A. Edit any score or evidence, then Save.</span>
+  </h2>
   <form method="POST" action="{{ url_for('update_call', call_id=call.id) }}">
     <table>
       <thead>
-        <tr><th style="width:22%">Criterion</th><th style="width:10%">Score</th><th>Evidence &amp; Notes</th></tr>
+        <tr>
+          <th style="width:20%">Dimension</th><th style="width:8%">Weight</th>
+          <th style="width:9%">Applies</th><th style="width:11%">Score (1–5)</th>
+          <th style="width:8%">Conf.</th><th>Evidence</th>
+        </tr>
       </thead>
       <tbody>
-        {% set ns = namespace(last_group='') %}
         {% for row in rows %}
-          {% if row.group != ns.last_group %}
-          <tr class="group-row"><td colspan="3">{{ row.group }}</td></tr>
-          {% set ns.last_group = row.group %}
-          {% endif %}
-          <tr class="band-{{ row.band }}">
-            <td>{{ row.label }}</td>
-            <td class="score-cell">
-              <input class="score-input" type="number" step="0.5" min="0" max="{{ row.max }}"
-                     name="score_{{ row.key }}" value="{{ row.score }}"> / {{ row.max }}
-            </td>
-            <td>
-              <textarea class="evidence-input" name="evidence_{{ row.key }}" rows="2">{{ row.evidence }}</textarea>
-            </td>
-          </tr>
+        <tr class="{{ 'band-' + row.band if row.applicable else 'na-row' }}">
+          <td><b>{{ row.label }}</b><div class="conf">{{ row.question }}</div></td>
+          <td class="score-cell">{{ row.weight }}%</td>
+          <td class="score-cell">
+            <input type="checkbox" name="applicable_{{ row.key }}" {{ 'checked' if row.applicable else '' }}>
+          </td>
+          <td class="score-cell">
+            <input class="score-input" type="number" step="0.5" min="1" max="5"
+                   name="score_{{ row.key }}"
+                   value="{{ '%g'|format(row.score) if row.score is not none else '' }}"
+                   placeholder="N/A">
+          </td>
+          <td class="score-cell conf">{{ (row.confidence*100)|round|int ~ '%' if row.confidence is not none else '—' }}</td>
+          <td><textarea class="evidence-input" name="evidence_{{ row.key }}" rows="2">{{ row.evidence }}</textarea></td>
+        </tr>
         {% endfor %}
       </tbody>
     </table>
-    <div style="margin-top:16px;">
-      <button type="submit" class="btn">Save Changes</button>
+    <div style="margin-top:12px; display:flex; gap:20px; align-items:center; flex-wrap:wrap;">
+      <label><input type="checkbox" name="critical_failure" {{ 'checked' if result.critical_failure else '' }}> Confirmed critical failure (cap 2.0)</label>
+      <label><input type="checkbox" name="high_severity_failure" {{ 'checked' if result.high_severity_failure else '' }}> High-severity issue (cap 3.0)</label>
     </div>
+    <div style="margin-top:16px;"><button type="submit" class="btn">Save Changes</button></div>
   </form>
 </div>
 
 <div class="card">
   <h2>Transcript</h2>
-  <div class="transcript-box">{{ call.transcript }}</div>
+  <div class="transcript-box" style="white-space: pre-wrap;">{{ call.transcript }}</div>
 </div>
 
 {% endif %}

@@ -51,7 +51,7 @@ def allowed_file(filename):
 def index():
     calls = storage.list_calls()
     return render_template(
-        "index.html", calls=calls, params=scoring.PARAMETERS,
+        "index.html", calls=calls, params=scoring.DIMENSIONS,
         supabase_url=SUPABASE_URL, supabase_anon_key=SUPABASE_ANON_KEY,
     )
 
@@ -141,18 +141,19 @@ def api_process_score(call_id):
     if not call.get("transcript"):
         return jsonify({"error": "No transcript yet - call transcribe first."}), 400
     try:
-        storage.update_status(call_id, "scoring", "Scoring call against the Voice rubric...")
+        storage.update_status(call_id, "scoring", "Scoring call against the HUFT Care model...")
         meta = {
             "agent_name": call.get("agent_name"),
             "call_date": call.get("call_date"),
             "call_topic": call.get("call_topic"),
         }
-        scores, method = scoring.score_transcript(call["transcript"], meta)
-        total = scoring.totals_from_scores(scores)
-        grade, _pct = scoring.grade_for(total)
-        storage.save_scores(call_id, scores, total, scoring.MAX_TOTAL, grade, method)
+        result, method = scoring.score_transcript(call["transcript"], meta)
+        # display_score is 1-5 (or None when evidence is insufficient); rating_band is the label.
+        total = result.get("display_score")
+        band = result.get("rating_band")
+        storage.save_scores(call_id, result, total, scoring.MAX_SCORE, band, method)
         storage.update_status(call_id, "done", "Scoring complete.")
-        return jsonify({"status": "done", "total_score": total, "grade": grade})
+        return jsonify({"status": "done", "total_score": total, "grade": band})
     except Exception as e:  # noqa: BLE001
         storage.update_status(call_id, "error", f"Unexpected error during scoring: {e}")
         return jsonify({"error": str(e)}), 500
@@ -164,25 +165,26 @@ def report_card(call_id):
     if not call:
         return "Call not found", 404
 
-    scores = call.get("scores") or {}
+    result = call.get("scores") or {}
+    dims = result.get("dimensions") or {}
     rows = []
-    for p in scoring.PARAMETERS:
-        v = scores.get(p["key"], {"score": p["max"], "evidence": "Not yet scored.", "max": p["max"]})
-        mx = v.get("max", p["max"])
-        s = v.get("score", mx)
-        pct = 100.0 * s / mx if mx else 0
+    for d in scoring.DIMENSIONS:
+        v = dims.get(d["key"], {})
+        score = v.get("score")
+        applicable = v.get("applicable", True)
         rows.append({
-            "key": p["key"], "label": p["label"], "group": p["group"], "max": mx,
-            "score": s, "pct": pct, "band": scoring.band_for_pct(pct),
+            "key": d["key"], "label": d["label"], "weight": d["weight"],
+            "question": d["question"], "score": score, "applicable": applicable,
+            "confidence": v.get("confidence"),
+            "band": scoring.band_for_score(score) if applicable else "na",
             "evidence": v.get("evidence", ""),
         })
 
-    recs = scoring.coaching_recommendations(scores) if scores else []
-    pct = (100.0 * (call["total_score"] or 0) / (call["max_score"] or 100)) if call.get("grade") else None
+    recs = scoring.coaching_recommendations(result) if dims else []
 
     return render_template(
-        "report_card.html", call=call, rows=rows, groups=scoring.GROUPS,
-        recs=recs, max_total=scoring.MAX_TOTAL, pct=pct,
+        "report_card.html", call=call, rows=rows, result=result,
+        max_score=scoring.MAX_SCORE,
     )
 
 
@@ -192,26 +194,46 @@ def update_call(call_id):
     if not call:
         return jsonify({"error": "not found"}), 404
 
-    scores = call.get("scores") or {}
-    for p in scoring.PARAMETERS:
-        key = p["key"]
-        score_field = f"score_{key}"
-        evidence_field = f"evidence_{key}"
-        if score_field in request.form:
-            try:
-                s = float(request.form.get(score_field))
-            except (TypeError, ValueError):
-                s = scores.get(key, {}).get("score", p["max"])
-            s = max(0.0, min(float(p["max"]), s))
-            evidence = request.form.get(evidence_field, scores.get(key, {}).get("evidence", ""))
-            scores[key] = {"score": s, "evidence": evidence, "max": p["max"]}
+    result = call.get("scores") or scoring.empty_result()
+    dims = result.setdefault("dimensions", {})
+    for d in scoring.DIMENSIONS:
+        key = d["key"]
+        entry = dims.setdefault(key, {"score": None, "applicable": True,
+                                      "evidence_sufficient": False, "evidence": "",
+                                      "weight": d["weight"]})
+        # Applicability: checkbox "applicable_<key>" present == applicable.
+        applicable = f"applicable_{key}" in request.form
+        entry["applicable"] = applicable
 
-    total = scoring.totals_from_scores(scores)
-    grade, _pct = scoring.grade_for(total)
-    method = call.get("scoring_method") or "Heuristic draft"
+        score_field = f"score_{key}"
+        if score_field in request.form:
+            raw = (request.form.get(score_field) or "").strip()
+            if raw == "" or not applicable:
+                entry["score"] = None
+                entry["evidence_sufficient"] = False
+            else:
+                try:
+                    s = max(1.0, min(scoring.MAX_SCORE, float(raw)))
+                except (TypeError, ValueError):
+                    s = entry.get("score")
+                entry["score"] = s
+                entry["evidence_sufficient"] = s is not None
+        evidence_field = f"evidence_{key}"
+        if evidence_field in request.form:
+            entry["evidence"] = request.form.get(evidence_field, entry.get("evidence", ""))
+        entry["weight"] = d["weight"]
+
+    # Let a reviewer clear/keep the critical & high-severity flags.
+    result["critical_failure"] = "critical_failure" in request.form
+    result["high_severity_failure"] = "high_severity_failure" in request.form
+
+    scoring.recompute(result)
+
+    method = call.get("scoring_method") or "Manual"
     if "human-reviewed" not in method:
         method = f"{method} + human-reviewed"
-    storage.save_scores(call_id, scores, total, scoring.MAX_TOTAL, grade, method)
+    storage.save_scores(call_id, result, result.get("display_score"),
+                        scoring.MAX_SCORE, result.get("rating_band"), method)
 
     return redirect(url_for("report_card", call_id=call_id))
 
@@ -221,25 +243,28 @@ def overview():
     calls = [c for c in storage.list_calls() if c["status"] == "done"]
 
     param_avgs = []
-    for p in scoring.PARAMETERS:
+    for d in scoring.DIMENSIONS:
         vals = []
         for c in calls:
-            v = (c.get("scores") or {}).get(p["key"])
-            if v:
-                vals.append(v.get("score", 0))
+            v = ((c.get("scores") or {}).get("dimensions") or {}).get(d["key"])
+            # Average only applicable, scored dimensions (N/A excluded).
+            if v and v.get("applicable") and v.get("score") is not None:
+                vals.append(float(v["score"]))
         avg = sum(vals) / len(vals) if vals else 0
-        pct = 100.0 * avg / p["max"] if p["max"] else 0
-        param_avgs.append({"label": p["label"], "avg": round(avg, 1), "max": p["max"],
-                            "pct": round(pct, 1), "band": scoring.band_for_pct(pct)})
+        pct = 100.0 * avg / scoring.MAX_SCORE if avg else 0
+        param_avgs.append({"label": d["label"], "avg": round(avg, 2),
+                           "max": scoring.MAX_SCORE, "n": len(vals),
+                           "pct": round(pct, 1), "band": scoring.band_for_score(avg)})
 
     ranked = sorted(calls, key=lambda c: (c["total_score"] or 0), reverse=True)
     total_scores = [c["total_score"] for c in calls if c["total_score"] is not None]
-    avg_total = round(sum(total_scores) / len(total_scores), 1) if total_scores else 0
-    pass_count = sum(1 for c in calls if (c["total_score"] or 0) >= 70)
+    avg_total = round(sum(total_scores) / len(total_scores), 2) if total_scores else 0
+    # "Pass" = displayed score >= 3.5 (Strong or better) on the 1-5 scale.
+    pass_count = sum(1 for c in calls if (c["total_score"] or 0) >= 3.5)
 
     return render_template(
         "overview.html", calls=ranked, param_avgs=param_avgs, avg_total=avg_total,
-        pass_count=pass_count, total_calls=len(calls), max_total=scoring.MAX_TOTAL,
+        pass_count=pass_count, total_calls=len(calls), max_score=scoring.MAX_SCORE,
     )
 
 

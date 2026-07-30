@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Overview · HUFT EQ{% endblock %}
+{% block title %}Overview · HUFT Care{% endblock %}
 {% block content %}
 
 <h1 class="page-title">Overview</h1>
@@ -11,15 +11,23 @@
 
 <div class="stat-grid">
   <div class="stat-card"><div class="val">{{ total_calls }}</div><div class="lbl">Calls Scored</div></div>
-  <div class="stat-card"><div class="val">{{ avg_total }}</div><div class="lbl">Avg Score / {{ max_total }}</div></div>
-  <div class="stat-card"><div class="val">{{ pass_count }}/{{ total_calls }}</div><div class="lbl">≥ 70 (Pass)</div></div>
-  <div class="stat-card"><div class="val">{{ calls[0].grade if calls else '—' }}</div><div class="lbl">Top Grade</div></div>
+  <div class="stat-card"><div class="val">{{ avg_total }}</div><div class="lbl">Avg Score / {{ max_score|int }}</div></div>
+  <div class="stat-card"><div class="val">{{ pass_count }}/{{ total_calls }}</div><div class="lbl">≥ 3.5 (Strong+)</div></div>
+  <div class="stat-card"><div class="val">{{ calls[0].grade or '—' if calls else '—' }}</div><div class="lbl">Top Band</div></div>
+</div>
+
+<div class="card">
+  <p style="color:var(--gray); font-size:13px; margin:0;">
+    Do not rank agents on the overall score alone. Interpret with call mix, complexity, tenure,
+    language and sample size; compare only after ~30–50 scoreable calls. Use trends and evidence for
+    coaching — performance or disciplinary use requires human review.
+  </p>
 </div>
 
 <div class="card">
   <h2>Ranking</h2>
   <table>
-    <thead><tr><th>#</th><th>Call</th><th>Agent</th><th>Date</th><th>Score</th><th>Grade</th><th></th></tr></thead>
+    <thead><tr><th>#</th><th>Call</th><th>Agent</th><th>Date</th><th>Score</th><th>Band</th><th></th></tr></thead>
     <tbody>
       {% for c in calls %}
       <tr>
@@ -27,8 +35,8 @@
         <td>{{ c.original_name }}{% if c.call_topic %}<br><span style="color:var(--gray); font-size:12px;">{{ c.call_topic }}</span>{% endif %}</td>
         <td>{{ c.agent_name or '—' }}</td>
         <td>{{ c.call_date or '—' }}</td>
-        <td class="score-cell">{{ '%.1f'|format(c.total_score) }}/{{ c.max_score|int }}</td>
-        <td class="score-cell">{{ c.grade }}</td>
+        <td class="score-cell">{% if c.total_score is not none %}{{ '%.2f'|format(c.total_score) }}/{{ max_score|int }}{% else %}N/A{% endif %}</td>
+        <td class="score-cell">{{ c.grade or '—' }}</td>
         <td><a class="btn secondary" href="{{ url_for('report_card', call_id=c.id) }}">View</a></td>
       </tr>
       {% endfor %}
@@ -37,20 +45,21 @@
 </div>
 
 <div class="card">
-  <h2>Average Score by Parameter</h2>
+  <h2>Average by Care Dimension</h2>
   <canvas id="paramChart" height="110"></canvas>
 </div>
 
 <div class="card">
-  <h2>Parameter Breakdown (avg across all calls)</h2>
+  <h2>Dimension Breakdown (avg across applicable calls)</h2>
   <table>
-    <thead><tr><th>Criterion</th><th>Avg Score</th><th>%</th></tr></thead>
+    <thead><tr><th>Dimension</th><th>Avg Score</th><th>%</th><th>n (applicable)</th></tr></thead>
     <tbody>
       {% for p in param_avgs %}
       <tr class="band-{{ p.band }}">
         <td>{{ p.label }}</td>
-        <td class="score-cell">{{ p.avg }}/{{ p.max }}</td>
+        <td class="score-cell">{{ p.avg }}/{{ p.max|int }}</td>
         <td class="score-cell">{{ p.pct }}%</td>
+        <td class="score-cell">{{ p.n }}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -60,15 +69,16 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 <script>
   const labels = {{ param_avgs|map(attribute='label')|list|tojson }};
+  const avgs = {{ param_avgs|map(attribute='avg')|list|tojson }};
   const pcts = {{ param_avgs|map(attribute='pct')|list|tojson }};
   const colors = pcts.map(p => p >= 80 ? '#1c6b32' : (p >= 50 ? '#8a6300' : '#a3221a'));
   new Chart(document.getElementById('paramChart'), {
     type: 'bar',
-    data: { labels: labels, datasets: [{ label: '% of max', data: pcts, backgroundColor: colors }] },
+    data: { labels: labels, datasets: [{ label: 'Avg score (1–5)', data: avgs, backgroundColor: colors }] },
     options: {
       responsive: true,
       plugins: { legend: { display: false } },
-      scales: { y: { beginAtZero: true, max: 100 }, x: { ticks: { autoSkip: false, maxRotation: 60, minRotation: 45, font: { size: 10 } } } }
+      scales: { y: { beginAtZero: true, max: 5 }, x: { ticks: { autoSkip: false, maxRotation: 30, minRotation: 0, font: { size: 11 } } } }
     }
   });
 </script>
