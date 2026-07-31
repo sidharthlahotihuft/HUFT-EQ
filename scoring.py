@@ -328,7 +328,7 @@ def _score_with_anthropic(transcript, meta):
         import anthropic
     except ImportError:
         return None
-    model = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+    model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
     client = anthropic.Anthropic(api_key=api_key)
     resp = client.messages.create(
         model=model, max_tokens=4000, temperature=0,

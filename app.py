@@ -31,6 +31,7 @@ from flask import Flask, jsonify, redirect, render_template, request, url_for
 
 import audio_storage
 import scoring
+import speaker_label
 import storage
 import transcribe
 
@@ -121,6 +122,10 @@ def api_process_transcribe(call_id):
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
+        # Ensure the transcript is split into "HUFT Agent:" / "Customer:" turns.
+        # Deepgram already labels speakers; for plain Whisper this adds labels
+        # via an LLM pass (verbatim, non-destructive). No-op without an LLM key.
+        transcript = speaker_label.ensure_labeled(transcript)
         storage.save_transcript(call_id, transcript)
         storage.update_status(call_id, "transcribed", "Transcript ready - scoring next...")
         return jsonify({"status": "transcribed"})
