@@ -27,7 +27,8 @@ import os
 import tempfile
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from werkzeug.security import check_password_hash
 
 import audio_storage
 import scoring
@@ -38,8 +39,75 @@ import transcribe
 load_dotenv()
 
 app = Flask(__name__, static_folder="public/static", static_url_path="/static")
+# Session signing key. MUST be set in production (Vercel env) so sessions stay
+# valid across serverless instances; the fallback is for local dev only.
+app.secret_key = os.environ.get("SECRET_KEY", "huft-care-portal-dev-secret-change-me")
+
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
+
+# --- Authentication ---------------------------------------------------------
+# Single admin login. Credentials come from env; the defaults below let it work
+# out of the box. The password default is a hash (not plaintext), so no secret
+# is committed. Override in .env / Vercel with ADMIN_EMAIL and either
+# ADMIN_PASSWORD (plain) or ADMIN_PASSWORD_HASH (a werkzeug hash).
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@headsupfortails.com").strip().lower()
+_DEFAULT_PW_HASH = (
+    "scrypt:32768:8:1$7FB5XSMO8fZZLM4k$b76aaeb390c7e293be82b87b9478543dee3bbe9"
+    "72bd0bb6be9988544fdec1065b9d35b3490c1b7eee188e2d5ee273231e239b4162fd3e88c6569d90b64881203"
+)
+ADMIN_PASSWORD_HASH = os.environ.get("ADMIN_PASSWORD_HASH", _DEFAULT_PW_HASH)
+ADMIN_PASSWORD_PLAIN = os.environ.get("ADMIN_PASSWORD")  # optional plaintext override
+
+# Endpoints reachable without logging in.
+PUBLIC_ENDPOINTS = {"login", "static"}
+
+
+def _password_ok(pw):
+    if ADMIN_PASSWORD_PLAIN:
+        return pw == ADMIN_PASSWORD_PLAIN
+    try:
+        return check_password_hash(ADMIN_PASSWORD_HASH, pw)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+@app.before_request
+def _require_login():
+    if request.endpoint in PUBLIC_ENDPOINTS or (request.path or "").startswith("/static"):
+        return
+    if not session.get("authed"):
+        return redirect(url_for("login", next=request.path))
+
+
+def _safe_next(target):
+    """Only allow local redirects (prevent open-redirect via ?next=)."""
+    if target and target.startswith("/") and not target.startswith("//"):
+        return target
+    return url_for("index")
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if session.get("authed"):
+        return redirect(url_for("index"))
+    error = None
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip().lower()
+        pw = request.form.get("password") or ""
+        if email == ADMIN_EMAIL and _password_ok(pw):
+            session["authed"] = True
+            session["email"] = email
+            return redirect(_safe_next(request.args.get("next")))
+        error = "Invalid email or password."
+    return render_template("login.html", error=error)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
 
 ALLOWED_EXTENSIONS = {"mp3", "wav", "m4a", "mp4", "webm", "ogg", "flac", "aac"}
 

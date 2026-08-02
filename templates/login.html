@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign in · HUFT Care</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <div class="login-wrap">
+    <form class="login-card" method="POST" action="{{ url_for('login') }}{% if request.args.get('next') %}?next={{ request.args.get('next') }}{% endif %}">
+      <div class="logo">🐾</div>
+      <h1>HUFT Care</h1>
+      <p class="sub">Customer Care · Call Quality Portal</p>
+
+      {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
+
+      <div class="field">
+        <label>Email</label>
+        <input type="email" name="email" placeholder="you@headsupfortails.com" autocomplete="username" required autofocus>
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" name="password" placeholder="••••••••" autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="btn block">Sign in</button>
+    </form>
+  </div>
+</body>
+</html>

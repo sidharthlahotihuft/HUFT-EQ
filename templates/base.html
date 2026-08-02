@@ -17,6 +17,7 @@
     <nav>
       <a href="{{ url_for('index') }}" class="{{ 'active' if request.endpoint == 'index' else '' }}">Upload</a>
       <a href="{{ url_for('overview') }}" class="{{ 'active' if request.endpoint == 'overview' else '' }}">Overview</a>
+      {% if session.get('authed') %}<a href="{{ url_for('logout') }}" class="logout">Log out</a>{% endif %}
     </nav>
   </div>
   <div class="container">
