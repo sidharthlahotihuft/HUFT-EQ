@@ -37,6 +37,13 @@
   .flag-on { background:var(--bad-bg); color:var(--bad-text); }
   .flag-off { background:var(--good-bg); color:var(--good-text); }
   @media (max-width:720px){ .care-areas{ grid-template-columns:1fr; } }
+  /* Transcript turns (chat-style: speaker above their line) */
+  .turn { padding:8px 0; line-height:1.55; }
+  .turn + .turn { border-top:1px solid var(--border-soft); }
+  .turn-who { display:block; font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px; }
+  .turn-agent .turn-who { color:var(--coral-strong); }
+  .turn-customer .turn-who { color:var(--navy); }
+  .turn-text { font-size:13.5px; color:var(--ink); }
 </style>
 {% endblock %}
 {% block content %}
@@ -249,7 +256,18 @@
 
 <div class="card">
   <h2>Transcript</h2>
+  {% if turns %}
+  <div class="transcript-box" style="white-space: normal;">
+    {% for t in turns %}
+    <div class="turn {{ 'turn-agent' if t.is_agent else 'turn-customer' }}">
+      {% if t.speaker %}<span class="turn-who">{{ t.speaker }}</span>{% endif %}
+      <span class="turn-text">{{ t.text }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
   <div class="transcript-box" style="white-space: pre-wrap;">{{ call.transcript }}</div>
+  {% endif %}
 </div>
 
 <script>

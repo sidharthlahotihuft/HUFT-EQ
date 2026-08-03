@@ -7,6 +7,7 @@ bypasses RLS, and no other key is ever used to touch this table.
 
 Run supabase/schema.sql once in your Supabase project's SQL editor before first use.
 """
+import json
 import os
 from datetime import datetime, timezone
 
@@ -99,7 +100,15 @@ def list_calls(order_by="created_at", desc=True):
 
 def _normalize(row):
     row = dict(row)
-    row["scores"] = row.get("scores_json") or {}
+    sj = row.get("scores_json")
+    # jsonb normally comes back as a dict, but guard against a string-encoded
+    # value (older rows / manual edits) so aggregation never crashes the page.
+    if isinstance(sj, str):
+        try:
+            sj = json.loads(sj)
+        except Exception:  # noqa: BLE001
+            sj = {}
+    row["scores"] = sj if isinstance(sj, dict) else {}
     return row
 
 

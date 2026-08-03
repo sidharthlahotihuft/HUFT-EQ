@@ -251,10 +251,55 @@ def _dimension_block():
     return "\n".join(out)
 
 
-def _prompt(transcript, meta):
+def calibration_summary(calls):
+    """Learn from manager edits: across human-reviewed calls, how far did human
+    reviewers move each dimension's score away from the AI's original? Positive
+    mean = humans scored higher (AI under-scores); negative = AI over-scores.
+    Returns {key: {label, n, mean_delta}} for dimensions with any overrides."""
+    agg = {d["key"]: [] for d in DIMENSIONS}
+    for c in calls or []:
+        method = (c.get("scoring_method") or "") + " " + ((c.get("scores") or {}).get("scoring_method") or "")
+        if "human-reviewed" not in method:
+            continue
+        dims = (c.get("scores") or {}).get("dimensions") or {}
+        for d in DIMENSIONS:
+            v = dims.get(d["key"]) or {}
+            ai, hu = v.get("ai_score"), v.get("score")
+            if v.get("applicable") and ai is not None and hu is not None:
+                agg[d["key"]].append(float(hu) - float(ai))
+    out = {}
+    for d in DIMENSIONS:
+        deltas = agg[d["key"]]
+        if deltas:
+            out[d["key"]] = {"label": d["label"], "n": len(deltas),
+                             "mean_delta": round(sum(deltas) / len(deltas), 2)}
+    return out
+
+
+def _calibration_text(cal):
+    """Turn learned biases into scoring guidance (only when the signal is strong
+    enough: at least 3 reviews and a meaningful average shift)."""
+    if not cal:
+        return ""
+    lines = []
+    for v in cal.values():
+        if v["n"] >= 3 and abs(v["mean_delta"]) >= 0.3:
+            if v["mean_delta"] > 0:
+                d = f"about {abs(v['mean_delta'])} points HIGHER (you tend to under-score this)"
+            else:
+                d = f"about {abs(v['mean_delta'])} points LOWER (you tend to over-score this)"
+            lines.append(f"- {v['label']}: human QA reviewers score {d}, over {v['n']} reviewed calls.")
+    if not lines:
+        return ""
+    return ("\nCALIBRATION FROM HUMAN QA (learn from past corrections — nudge these dimensions "
+            "toward the human judgment, using the evidence, not by rote):\n" + "\n".join(lines) + "\n")
+
+
+def _prompt(transcript, meta, calibration=None):
     meta_text = "\n".join(f"{k}: {v}" for k, v in meta.items() if v) or "(none provided)"
     scenarios = ", ".join(SCENARIOS)
-    return f"""You are the HUFT Care Intelligence Coach evaluating a customer-care phone call for
+    cal_text = _calibration_text(calibration)
+    return f"""{cal_text}You are the HUFT Care Intelligence Coach evaluating a customer-care phone call for
 Head Up For Tails (HUFT), an Indian pet-care brand. Pets are family: every call is about a
 person and an animal they love, not merely a ticket. Judge care, accuracy and clarity across
 English, Hindi and Hinglish equally.
@@ -339,7 +384,7 @@ def _extract_json(text):
     return json.loads(match.group(0))
 
 
-def _score_with_anthropic(transcript, meta):
+def _score_with_anthropic(transcript, meta, calibration=None):
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         return None
@@ -351,13 +396,13 @@ def _score_with_anthropic(transcript, meta):
     client = anthropic.Anthropic(api_key=api_key)
     resp = client.messages.create(
         model=model, max_tokens=4000, temperature=0,
-        messages=[{"role": "user", "content": _prompt(transcript, meta)}],
+        messages=[{"role": "user", "content": _prompt(transcript, meta, calibration)}],
     )
     text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
     return _extract_json(text)
 
 
-def _score_with_openai(transcript, meta):
+def _score_with_openai(transcript, meta, calibration=None):
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         return None
@@ -369,7 +414,7 @@ def _score_with_openai(transcript, meta):
     client = OpenAI(api_key=api_key)
     resp = client.chat.completions.create(
         model=model, temperature=0, response_format={"type": "json_object"},
-        messages=[{"role": "user", "content": _prompt(transcript, meta)}],
+        messages=[{"role": "user", "content": _prompt(transcript, meta, calibration)}],
     )
     return _extract_json(resp.choices[0].message.content)
 
@@ -408,6 +453,10 @@ def _assemble(raw, method_label):
     for d in DIMENSIONS:
         entry = _coerce_dimension(raw_dims.get(d["key"]) or {})
         entry["weight"] = d["weight"]
+        # Remember the AI's own score/evidence so human edits can be measured
+        # against it (the calibration/learning loop).
+        entry["ai_score"] = entry["score"]
+        entry["ai_evidence"] = entry["evidence"]
         result["dimensions"][d["key"]] = entry
 
     result["what_went_well"] = raw.get("what_went_well") or []
@@ -438,11 +487,11 @@ def _assemble(raw, method_label):
     return result
 
 
-def llm_score(transcript, meta=None):
+def llm_score(transcript, meta=None, calibration=None):
     meta = meta or {}
     for fn, label in ((_score_with_anthropic, "Claude"), (_score_with_openai, "OpenAI GPT")):
         try:
-            raw = fn(transcript, meta)
+            raw = fn(transcript, meta, calibration)
         except Exception as e:  # noqa: BLE001 - fall back on any provider error
             raw = None
             print(f"[scoring] {label} scoring failed: {e}")
@@ -469,10 +518,12 @@ def _needs_review_result():
     return result
 
 
-def score_transcript(transcript, meta=None):
-    """Main entry point. Returns (result_dict, method_label)."""
+def score_transcript(transcript, meta=None, calibration=None):
+    """Main entry point. Returns (result_dict, method_label). `calibration` is
+    the learned human-override summary from calibration_summary(), which nudges
+    the scorer on dimensions it has historically got wrong."""
     meta = meta or {}
-    result, method = llm_score(transcript, meta)
+    result, method = llm_score(transcript, meta, calibration)
     if result:
         return result, method
     return _needs_review_result(), "Needs review (no AI scoring key configured)"

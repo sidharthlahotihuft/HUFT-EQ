@@ -25,6 +25,7 @@ Then open http://localhost:5001
 """
 import json
 import os
+import re
 import tempfile
 
 from dotenv import load_dotenv
@@ -181,6 +182,32 @@ ALLOWED_EXTENSIONS = {"mp3", "wav", "m4a", "mp4", "webm", "ogg", "flac", "aac"}
 
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+_SPEAKER_RE = re.compile(r"^(HUFT Agent|Agent|Customer|Caller|Speaker\s*\d+)\s*:\s*(.*)$",
+                         re.IGNORECASE)
+
+
+def parse_transcript(text):
+    """Split a labeled transcript into turns [{speaker, is_agent, text}] so the
+    report card can show one turn per line with clear attribution. Lines without
+    a speaker label are treated as a continuation of the previous turn."""
+    turns = []
+    for raw in (text or "").replace("\r", "").split("\n"):
+        line = raw.strip()
+        if not line:
+            continue
+        m = _SPEAKER_RE.match(line)
+        if m:
+            who = m.group(1)
+            is_agent = "agent" in who.lower()
+            turns.append({"speaker": "HUFT Agent" if is_agent else "Customer",
+                          "is_agent": is_agent, "text": m.group(2).strip()})
+        elif turns:
+            turns[-1]["text"] = (turns[-1]["text"] + " " + line).strip()
+        else:
+            turns.append({"speaker": "", "is_agent": False, "text": line})
+    return turns
 
 
 @app.route("/")
@@ -362,10 +389,11 @@ def report_card(call_id):
 
     recs = scoring.coaching_recommendations(result) if dims else []
     audio_url = audio_storage.signed_url(call.get("filename"))
+    turns = parse_transcript(call.get("transcript"))
 
     return render_template(
         "report_card.html", call=call, rows=rows, result=result,
-        max_score=scoring.MAX_SCORE, audio_url=audio_url,
+        max_score=scoring.MAX_SCORE, audio_url=audio_url, turns=turns,
     )
 
 
@@ -481,10 +509,19 @@ def overview():
     # "Pass" = displayed score >= 3.5 (Strong or better) on the 1-5 scale.
     pass_count = sum(1 for c in calls if (c["total_score"] or 0) >= 3.5)
 
-    summary = scoring.manager_summary(calls)
-    # Scoring calibration is learned from ALL human-reviewed calls (not just the
-    # filtered window), so it reflects the full override history.
-    calibration = scoring.calibration_summary(storage.list_calls())
+    # Aggregations are wrapped so an unexpected data shape degrades gracefully
+    # instead of 500-ing the whole dashboard.
+    try:
+        summary = scoring.manager_summary(calls)
+    except Exception as e:  # noqa: BLE001
+        print(f"[overview] manager_summary failed: {e}")
+        summary = {"n": 0, "narrative": "", "metrics": {}}
+    try:
+        # Learned from ALL human-reviewed calls (not just the filtered window).
+        calibration = scoring.calibration_summary(storage.list_calls())
+    except Exception as e:  # noqa: BLE001
+        print(f"[overview] calibration_summary failed: {e}")
+        calibration = {}
 
     return render_template(
         "overview.html", calls=ranked, param_avgs=param_avgs, avg_total=avg_total,

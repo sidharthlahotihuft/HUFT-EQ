@@ -34,6 +34,30 @@
 </div>
 {% endif %}
 
+{% if calibration %}
+<div class="card">
+  <h2>Scoring calibration <span style="font-weight:400;color:var(--gray-soft);font-size:12px;">— where the AI differs from human reviewers (learned from your edits, and fed back into future scoring)</span></h2>
+  <table>
+    <thead><tr><th>Dimension</th><th>Human vs AI</th><th>Direction</th><th>Reviews</th></tr></thead>
+    <tbody>
+      {% for key, c in calibration.items() %}
+      <tr>
+        <td>{{ c.label }}</td>
+        <td class="score-cell">{{ '%+.2f'|format(c.mean_delta) }}</td>
+        <td>
+          {% if c.mean_delta > 0.1 %}<span class="flag" style="background:var(--warn-bg);color:var(--warn-text);">AI under-scores</span>
+          {% elif c.mean_delta < -0.1 %}<span class="flag" style="background:var(--bad-bg);color:var(--bad-text);">AI over-scores</span>
+          {% else %}<span class="flag" style="background:var(--good-bg);color:var(--good-text);">Well-calibrated</span>{% endif %}
+        </td>
+        <td class="score-cell">{{ c.n }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p style="color:var(--gray-soft);font-size:12px;margin:12px 0 0;">Once a dimension has 3+ reviews with a consistent shift, the scorer automatically corrects for it on new calls.</p>
+</div>
+{% endif %}
+
 <div class="stat-grid" style="grid-template-columns:repeat(2,1fr); max-width:520px;">
   <div class="stat-card"><div class="val">{{ total_calls }}</div><div class="lbl">Calls Scored</div></div>
   <div class="stat-card"><div class="val">{{ avg_total }}</div><div class="lbl">Avg Score / {{ max_score|int }}</div></div>
