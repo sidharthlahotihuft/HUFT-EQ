@@ -89,7 +89,7 @@ def _romanize(text):
     scheme = getattr(sanscript, os.environ.get("ROMANIZE_SCHEME", "OPTITRANS"),
                      sanscript.OPTITRANS)
     dev = re.compile(r"[ऀ-ॿ]+")
-    return dev.sub(lambda m: transliterate(m.group(0), sanscript.DEVANAGARI, scheme), text)
+    return dev.sub(lambda m: transliterate(m.group(0), sanscript.DEVANAGARI, scheme).lower(), text)
 
 
 def _looks_like_hallucination(text):
