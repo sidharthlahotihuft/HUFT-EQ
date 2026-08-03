@@ -42,3 +42,18 @@ def delete_object(storage_path):
     from storage import get_client
 
     return get_client().storage.from_(BUCKET).remove([storage_path])
+
+
+def signed_url(storage_path, expires_in=3600):
+    """Return a short-lived signed URL to stream/play the recording in the
+    browser (the bucket is private, so a plain URL won't work). None on failure."""
+    if not storage_path:
+        return None
+    from storage import get_client
+    try:
+        resp = get_client().storage.from_(BUCKET).create_signed_url(storage_path, expires_in)
+    except Exception:  # noqa: BLE001
+        return None
+    if isinstance(resp, dict):
+        return resp.get("signedURL") or resp.get("signedUrl") or resp.get("signed_url")
+    return None

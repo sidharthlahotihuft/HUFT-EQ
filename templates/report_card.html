@@ -53,6 +53,12 @@
     <div><b>Status:</b> <span class="pill status-{{ call.status }}">{{ call.status_message or call.status }}</span></div>
     {% if call.scoring_method %}<div><b>Scoring method:</b> <span class="method-tag">{{ call.scoring_method }}</span></div>{% endif %}
   </div>
+  {% if audio_url %}
+  <div style="margin-top:14px;">
+    <div style="font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--gray-soft);margin-bottom:6px;">🔊 Recording</div>
+    <audio controls preload="none" style="width:100%; max-width:560px;" src="{{ audio_url }}"></audio>
+  </div>
+  {% endif %}
 </div>
 
 {% if call.status != 'done' %}

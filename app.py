@@ -358,10 +358,11 @@ def report_card(call_id):
         })
 
     recs = scoring.coaching_recommendations(result) if dims else []
+    audio_url = audio_storage.signed_url(call.get("filename"))
 
     return render_template(
         "report_card.html", call=call, rows=rows, result=result,
-        max_score=scoring.MAX_SCORE,
+        max_score=scoring.MAX_SCORE, audio_url=audio_url,
     )
 
 
