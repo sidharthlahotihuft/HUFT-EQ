@@ -1,27 +1,38 @@
 {% extends "base.html" %}
 {% block title %}Upload · HUFT EQ{% endblock %}
+{% block head %}
+<style>
+  .prog-row { display:flex; align-items:center; gap:12px; padding:9px 0; border-bottom:1px solid var(--border-soft); font-size:13.5px; }
+  .prog-row:last-child { border-bottom:none; }
+  .prog-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; color:var(--ink); }
+  .prog-status { flex-shrink:0; font-size:12px; color:var(--gray); }
+  .prog-status.done { color:var(--good-text); font-weight:700; }
+  .prog-status.err { color:var(--bad-text); font-weight:700; }
+  .prog-status.busy { color:var(--coral-strong); font-weight:600; }
+</style>
+{% endblock %}
 {% block content %}
 
-<h1 class="page-title">Score a Call</h1>
-<p class="subtitle">Upload a recording. It's transcribed with speaker labels, then scored against the HUFT Care model ({{ params|length }} care dimensions, 1–5 each). You can edit any AI score afterwards on the report card.</p>
+<h1 class="page-title">Score Calls</h1>
+<p class="subtitle">Upload one or more recordings. Each is transcribed with speaker labels, then scored against the HUFT Care model ({{ params|length }} care dimensions, 1–5 each). You can edit any AI score afterwards on the report card.</p>
 
 <div class="card">
-  <h2>Upload Recording</h2>
+  <h2>Upload Recordings</h2>
   <form id="upload-form" class="upload-grid" enctype="multipart/form-data">
     <div class="full">
-      <label>Audio File</label>
+      <label>Audio Files</label>
       <div class="dropzone" id="dropzone">
-        <div id="dz-label">Drag &amp; drop an audio file here, or click to browse<br>(mp3, wav, m4a, ogg, flac, aac)</div>
+        <div id="dz-label">Drag &amp; drop audio files here, or click to browse — you can select several at once<br>(mp3, wav, m4a, ogg, flac, aac)</div>
         <div class="filename" id="dz-filename"></div>
       </div>
-      <input type="file" name="audio" id="audio-input" accept=".mp3,.wav,.m4a,.mp4,.webm,.ogg,.flac,.aac" style="display:none">
+      <input type="file" name="audio" id="audio-input" multiple accept=".mp3,.wav,.m4a,.mp4,.webm,.ogg,.flac,.aac" style="display:none">
     </div>
     <div>
-      <label>Agent Name</label>
+      <label>Agent Name <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--gray-soft);">(applies to all)</span></label>
       <input type="text" name="agent_name" placeholder="e.g. Savy Sunny">
     </div>
     <div>
-      <label>Call Date</label>
+      <label>Call Date <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--gray-soft);">(applies to all)</span></label>
       <input type="date" name="call_date">
     </div>
     <div class="full">
@@ -29,10 +40,19 @@
       <input type="text" name="call_topic" placeholder="e.g. Delayed delivery follow-up">
     </div>
     <div class="full">
-      <button type="submit" class="btn" id="submit-btn">Upload &amp; Score Call</button>
-      <span id="upload-error" style="color:#a3221a; font-size:13px; margin-left:12px;"></span>
+      <button type="submit" class="btn" id="submit-btn">Upload &amp; Score</button>
+      <span id="upload-error" style="color:var(--bad-text); font-size:13px; margin-left:12px;"></span>
     </div>
   </form>
+</div>
+
+<div class="card" id="progress-card" style="display:none;">
+  <h2>Processing <span id="prog-count" style="font-weight:400;color:var(--gray-soft);font-size:12px;"></span></h2>
+  <div id="progress"></div>
+  <div id="prog-done" style="display:none;margin-top:14px;">
+    <a class="btn" href="{{ url_for('index') }}">Refresh list</a>
+    {% if session.get('role') == 'manager' %}<a class="btn secondary" href="{{ url_for('overview') }}">Go to Dashboard</a>{% endif %}
+  </div>
 </div>
 
 <div class="card">
@@ -66,6 +86,13 @@ const dropzone = document.getElementById('dropzone');
 const audioInput = document.getElementById('audio-input');
 const dzFilename = document.getElementById('dz-filename');
 
+function describeSelection() {
+  const n = audioInput.files.length;
+  if (!n) { dzFilename.textContent = ''; return; }
+  if (n === 1) { dzFilename.textContent = audioInput.files[0].name; return; }
+  dzFilename.textContent = `${n} files selected`;
+}
+
 dropzone.addEventListener('click', () => audioInput.click());
 dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('drag'); });
 dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag'));
@@ -74,78 +101,110 @@ dropzone.addEventListener('drop', (e) => {
   dropzone.classList.remove('drag');
   if (e.dataTransfer.files.length) {
     audioInput.files = e.dataTransfer.files;
-    dzFilename.textContent = e.dataTransfer.files[0].name;
+    describeSelection();
   }
 });
-audioInput.addEventListener('change', () => {
-  dzFilename.textContent = audioInput.files.length ? audioInput.files[0].name : '';
-});
+audioInput.addEventListener('change', describeSelection);
 
 const SUPABASE_URL = {{ supabase_url|tojson }};
 const SUPABASE_ANON_KEY = {{ supabase_anon_key|tojson }};
 const sb = (SUPABASE_URL && SUPABASE_ANON_KEY) ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
-// The audio file is uploaded DIRECTLY from this browser to Supabase Storage
-// (not through our own server) because Vercel Functions cap request bodies
-// at 4.5MB, which most call recordings exceed. Our backend only issues a
-// short-lived signed upload token, then later downloads the file itself
-// server-side to run Whisper on it.
+async function step(url) {
+  const res = await fetch(url, { method: 'POST' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request to ${url} failed.`);
+  return data;
+}
+
+function addRow(name) {
+  const row = document.createElement('div');
+  row.className = 'prog-row';
+  const nm = document.createElement('div'); nm.className = 'prog-name'; nm.textContent = name;
+  const st = document.createElement('div'); st.className = 'prog-status busy'; st.textContent = 'Queued…';
+  row.appendChild(nm); row.appendChild(st);
+  document.getElementById('progress').appendChild(row);
+  return {
+    set(text, cls) { st.textContent = text; st.className = 'prog-status ' + (cls || 'busy'); },
+    done(callId) {
+      st.textContent = 'Done'; st.className = 'prog-status done';
+      const a = document.createElement('a'); a.className = 'btn secondary'; a.href = '/call/' + callId;
+      a.textContent = 'View'; a.style.marginLeft = '10px'; row.appendChild(a);
+    },
+  };
+}
+
+// Each file is processed end-to-end (upload -> transcribe -> score) before the
+// next, so a large batch doesn't hammer the transcription/scoring APIs at once.
+async function processFile(file, meta, row) {
+  row.set('Requesting upload slot…');
+  const urlData = await (await fetch('/api/upload-url', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename: file.name }),
+  })).json();
+  if (!urlData.bucket) throw new Error(urlData.error || 'Could not get an upload slot.');
+
+  row.set('Uploading audio…');
+  const { error: upErr } = await sb.storage.from(urlData.bucket).uploadToSignedUrl(urlData.path, urlData.token, file);
+  if (upErr) throw new Error(upErr.message || 'Upload to storage failed.');
+
+  row.set('Creating record…');
+  const callRes = await fetch('/api/calls', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      storage_path: urlData.path, original_name: file.name,
+      agent_name: meta.agent_name, call_date: meta.call_date, call_topic: meta.call_topic,
+    }),
+  });
+  const callData = await callRes.json();
+  if (!callRes.ok) throw new Error(callData.error || 'Could not create call record.');
+  const callId = callData.call_id;
+
+  row.set('Transcribing…');
+  await step(`/api/process/transcribe/${callId}`);
+  row.set('Scoring…');
+  await step(`/api/process/score/${callId}`);
+  row.done(callId);
+}
+
 document.getElementById('upload-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const errEl = document.getElementById('upload-error');
   const btn = document.getElementById('submit-btn');
   errEl.textContent = '';
 
-  if (!audioInput.files.length) {
-    errEl.textContent = 'Please choose an audio file first.';
-    return;
-  }
-  if (!sb) {
-    errEl.textContent = 'Supabase is not configured yet (missing SUPABASE_URL / SUPABASE_ANON_KEY in .env).';
-    return;
-  }
+  const files = Array.from(audioInput.files);
+  if (!files.length) { errEl.textContent = 'Please choose at least one audio file.'; return; }
+  if (!sb) { errEl.textContent = 'Supabase is not configured yet (missing SUPABASE_URL / SUPABASE_ANON_KEY).'; return; }
 
-  const file = audioInput.files[0];
   const fd = new FormData(e.target);
+  const meta = { agent_name: fd.get('agent_name'), call_date: fd.get('call_date'), call_topic: fd.get('call_topic') };
+
   btn.disabled = true;
+  document.getElementById('progress-card').style.display = '';
+  document.getElementById('progress').innerHTML = '';
+  document.getElementById('prog-done').style.display = 'none';
 
-  try {
-    btn.textContent = 'Requesting upload slot…';
-    const urlRes = await fetch('/api/upload-url', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filename: file.name }),
-    });
-    const urlData = await urlRes.json();
-    if (!urlRes.ok) throw new Error(urlData.error || 'Could not get an upload slot.');
-
-    btn.textContent = 'Uploading audio…';
-    const { error: uploadErr } = await sb.storage
-      .from(urlData.bucket)
-      .uploadToSignedUrl(urlData.path, urlData.token, file);
-    if (uploadErr) throw new Error(uploadErr.message || 'Upload to storage failed.');
-
-    btn.textContent = 'Creating call record…';
-    const callRes = await fetch('/api/calls', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        storage_path: urlData.path,
-        original_name: file.name,
-        agent_name: fd.get('agent_name'),
-        call_date: fd.get('call_date'),
-        call_topic: fd.get('call_topic'),
-      }),
-    });
-    const callData = await callRes.json();
-    if (!callRes.ok) throw new Error(callData.error || 'Could not create call record.');
-
-    window.location.href = callData.redirect;
-  } catch (err) {
-    errEl.textContent = err.message || String(err);
-    btn.disabled = false;
-    btn.textContent = 'Upload & Score Call';
+  let done = 0, failed = 0;
+  const countEl = document.getElementById('prog-count');
+  for (const file of files) {
+    const row = addRow(file.name);
+    countEl.textContent = `(${done + failed}/${files.length})`;
+    btn.textContent = `Processing ${done + failed + 1} of ${files.length}…`;
+    try {
+      await processFile(file, meta, row);
+      done++;
+    } catch (err) {
+      row.set('Error: ' + (err.message || String(err)), 'err');
+      failed++;
+    }
+    countEl.textContent = `(${done + failed}/${files.length})`;
   }
+
+  btn.disabled = false;
+  btn.textContent = 'Upload & Score';
+  document.getElementById('prog-done').style.display = '';
+  audioInput.value = ''; describeSelection();
 });
 </script>
 {% endblock %}
