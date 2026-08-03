@@ -2,12 +2,37 @@
 {% block title %}Overview · HUFT Care{% endblock %}
 {% block content %}
 
-<h1 class="page-title">Overview</h1>
-<p class="subtitle">Summary across all scored calls · <a href="{{ url_for('index') }}">&larr; Upload another call</a></p>
+<h1 class="page-title">Manager Dashboard</h1>
+<p class="subtitle">Team quality across scored calls · <a href="{{ url_for('index') }}">&larr; Upload another call</a></p>
+
+<div class="card">
+  <form method="GET" action="{{ url_for('overview') }}" style="display:flex; align-items:flex-end; gap:14px; flex-wrap:wrap;">
+    <div><label>From</label><input type="date" name="from" value="{{ date_from }}"></div>
+    <div><label>To</label><input type="date" name="to" value="{{ date_to }}"></div>
+    <button type="submit" class="btn">Apply</button>
+    {% if date_from or date_to %}<a class="btn secondary" href="{{ url_for('overview') }}">Clear</a>{% endif %}
+    <span style="color:var(--gray-soft); font-size:12px; margin-left:auto;">
+      {% if date_from or date_to %}Showing {{ date_from or '…' }} → {{ date_to or '…' }}{% else %}Showing all time{% endif %}
+    </span>
+  </form>
+</div>
 
 {% if not calls %}
-<div class="card"><div class="empty-state">No scored calls yet. Upload and score a call to see the overview.</div></div>
+<div class="card"><div class="empty-state">No scored calls in this period. Adjust the dates or upload and score a call.</div></div>
 {% else %}
+
+{% if summary and summary.n %}
+<div class="card" style="background:linear-gradient(180deg,#fff,#fdfaf7);">
+  <h2>Weekly summary</h2>
+  <p style="font-size:15px; line-height:1.6; color:var(--ink); margin:0 0 14px;">{{ summary.narrative }}</p>
+  <div style="display:flex; flex-wrap:wrap; gap:10px 22px; font-size:12.5px; color:var(--gray);">
+    <span><b style="color:var(--navy);">{{ summary.metrics.escalation_pct|int }}%</b> needed escalation</span>
+    <span><b style="color:var(--navy);">{{ summary.metrics.unsupported_pct|int }}%</b> unsupported promise</span>
+    <span><b style="color:var(--navy);">{{ summary.metrics.not_resolved_pct|int }}%</b> not fully resolved</span>
+    {% if summary.metrics.pet_relevant %}<span>Pet relevant in <b style="color:var(--navy);">{{ summary.metrics.pet_relevant }}</b>, acknowledged in <b style="color:var(--navy);">{{ summary.metrics.pet_ack_pct|int }}%</b></span>{% endif %}
+  </div>
+</div>
+{% endif %}
 
 <div class="stat-grid">
   <div class="stat-card"><div class="val">{{ total_calls }}</div><div class="lbl">Calls Scored</div></div>

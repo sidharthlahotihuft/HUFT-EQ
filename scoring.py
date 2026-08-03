@@ -40,6 +40,7 @@ import re
 DIMENSIONS = [
     dict(
         key="customer_understood", label="Customer understood", weight=20,
+        plain="Did the agent understand the customer's actual problem?",
         question="Did the agent correctly understand and reflect the real problem?",
         anchor5="Reflects both the request and the underlying concern; minimal repetition.",
         anchor3="Understands the task but misses the deeper concern.",
@@ -50,6 +51,7 @@ DIMENSIONS = [
     ),
     dict(
         key="pet_acknowledged", label="Pet acknowledged", weight=15,
+        plain="Did they acknowledge the pet's comfort, safety or wellbeing?",
         question="When relevant, did the agent recognise the pet's comfort, safety, wellbeing or emotional significance?",
         anchor5="Naturally responds to the pet's relevant comfort, safety, health or significance.",
         anchor3="Mentions the pet generically or late.",
@@ -60,6 +62,7 @@ DIMENSIONS = [
     ),
     dict(
         key="empathy", label="Empathy", weight=15,
+        plain="Did they recognise the customer's inconvenience, disappointment or worry?",
         question="Did the response specifically acknowledge inconvenience, disappointment, worry or grief?",
         anchor5="Specific, timely and proportionate.",
         anchor3="Generic acknowledgment such as “I understand.”",
@@ -70,6 +73,7 @@ DIMENSIONS = [
     ),
     dict(
         key="ownership", label="Ownership", weight=20,
+        plain="Did they take responsibility for helping, rather than passing the customer around?",
         question="Did the agent take responsibility for moving the issue forward?",
         anchor5="Clear next steps, owner and timeline; reduces customer effort.",
         anchor3="Some help, but hand-off or follow-up is vague.",
@@ -80,6 +84,7 @@ DIMENSIONS = [
     ),
     dict(
         key="resolution", label="Resolution", weight=20,
+        plain="Was the information accurate, complete and easy to understand?",
         question="Was the information accurate, complete, clear and policy-aligned?",
         anchor5="Accurate, complete, concise and confirmed.",
         anchor3="Mostly correct but timeline/conditions unclear.",
@@ -90,6 +95,7 @@ DIMENSIONS = [
     ),
     dict(
         key="warmth", label="Warmth", weight=10,
+        plain="Did the customer feel genuinely cared for, rather than simply processed?",
         question="Did the customer feel cared for rather than processed?",
         anchor5="Attentive, respectful and naturally human throughout.",
         anchor3="Polite but transactional.",
@@ -218,7 +224,10 @@ def empty_result():
         "biggest_missed_moment": {"summary": "", "timestamp": ""}, "try_instead": "",
         "resolution_status": "", "commitments": [], "risks_alerts": [],
         "policy_check": {"status": "", "note": ""}, "coaching_tag": "",
-        "failure_attribution": "", "critical_failure": False,
+        "failure_attribution": "",
+        "escalation_needed": {"answer": "", "reason": ""},
+        "unsupported_promise": {"answer": "", "note": ""},
+        "critical_failure": False,
         "high_severity_failure": False, "transcript_confidence": 1.0,
     }
 
@@ -256,6 +265,14 @@ Follow these rules strictly:
   agent for not mentioning a pet when no pet is relevant.
 - A score of 5 requires affirmative evidence, not merely the absence of failure. A 3 is
   competent/adequate, not a punishment.
+- Judge RELEVANCE and SINCERITY, not keywords. Do NOT reward an agent for merely saying the pet's
+  name or a generic "I understand" / "I'm sorry" — empathy and pet-acknowledgment score high only
+  when they respond to the SPECIFIC concern the customer raised. A scripted, going-through-the-
+  motions phrase is a 2-3, not a 5. Empty empathy ("I understand" with nothing understood), pet
+  tokenism (name inserted while the concern is ignored) and "as per policy" used before any
+  acknowledgment are all low-scoring, not high. (E.g. weak: "I understand, ma'am." Strong: "I'm
+  sorry neither size worked comfortably for your dog. You've already gone through an exchange, so
+  let me make the return as easy as possible.")
 - Cite transcript evidence (quote or paraphrase, with an approximate timestamp) for every score.
 - Do NOT infer emotion as fact from tone alone; say "the customer appears..." unless they name it.
 - Never score accent, gender, region, grammar, code-switching or vocabulary. Brevity is not
@@ -299,6 +316,8 @@ Return ONLY a JSON object (no markdown, no commentary) shaped EXACTLY like this:
   "biggest_missed_moment": {{"summary": "<the single most valuable improvement>", "timestamp": "<~mm:ss>"}},
   "try_instead": "<one natural sentence appropriate to that exact moment>",
   "resolution_status": "<resolved|partially_resolved|unresolved|unclear> - <short reason>",
+  "escalation_needed": {{"answer": "<yes|no>", "reason": "<why, if yes>"}},
+  "unsupported_promise": {{"answer": "<yes|no>", "note": "<what was promised without support, if yes>"}},
   "commitments": [{{"action": "...", "owner": "...", "due": "...", "in_ticket": "<yes|no|unclear>"}}],
   "risks_alerts": [{{"severity": "<critical|high|medium|coaching>", "summary": "...", "evidence": "..."}}],
   "policy_check": {{"status": "<aligned|possible_mismatch|cannot_verify>", "note": "..."}},
@@ -399,6 +418,12 @@ def _assemble(raw, method_label):
     }
     result["try_instead"] = (raw.get("try_instead") or "").strip()
     result["resolution_status"] = (raw.get("resolution_status") or "").strip()
+    esc = raw.get("escalation_needed") or {}
+    result["escalation_needed"] = {"answer": (esc.get("answer") or "").strip().lower(),
+                                   "reason": (esc.get("reason") or "").strip()}
+    up = raw.get("unsupported_promise") or {}
+    result["unsupported_promise"] = {"answer": (up.get("answer") or "").strip().lower(),
+                                     "note": (up.get("note") or "").strip()}
     result["commitments"] = raw.get("commitments") or []
     result["risks_alerts"] = raw.get("risks_alerts") or []
     pc = raw.get("policy_check") or {}
@@ -477,3 +502,99 @@ def coaching_recommendations(result, top_n=3):
             "evidence": v.get("evidence", ""),
         })
     return out
+
+
+# ---------------------------------------------------------------------------
+# 6. Manager weekly summary (Brief Section 12 — organisational learning)
+# ---------------------------------------------------------------------------
+def _pct(n, d):
+    return round(100.0 * n / d, 0) if d else 0
+
+
+def manager_summary(calls):
+    """Compute plain-language organisational-learning metrics across a set of
+    scored calls (already date-filtered by the caller). Returns metrics + a
+    narrative paragraph like the Section-12 example. Every percentage carries
+    its denominator so nothing is read out of context."""
+    scored = [c for c in calls if (c.get("scores") or {}).get("dimensions")]
+    n = len(scored)
+    if n == 0:
+        return {"n": 0, "narrative": "No scored calls in this period yet.", "metrics": {}}
+
+    def dim(c, key):
+        return ((c.get("scores") or {}).get("dimensions") or {}).get(key) or {}
+
+    # Overall average (only calls with a numeric score)
+    totals = [c["total_score"] for c in scored if c.get("total_score") is not None]
+    avg = round(sum(totals) / len(totals), 2) if totals else None
+
+    # Escalation / unsupported promise
+    esc = sum(1 for c in scored if ((c.get("scores") or {}).get("escalation_needed") or {}).get("answer") == "yes")
+    promise = sum(1 for c in scored if ((c.get("scores") or {}).get("unsupported_promise") or {}).get("answer") == "yes")
+
+    # Resolution breakdown
+    res_counts = {"resolved": 0, "partially_resolved": 0, "unresolved": 0, "unclear": 0}
+    for c in scored:
+        rs = ((c.get("scores") or {}).get("resolution_status") or "").split(" - ")[0].strip().lower().replace(" ", "_")
+        if rs in res_counts:
+            res_counts[rs] += 1
+
+    # Weak customer-understanding (proxy for "had to repeat the issue")
+    cu_applic = [c for c in scored if dim(c, "customer_understood").get("applicable") and dim(c, "customer_understood").get("score") is not None]
+    cu_weak = sum(1 for c in cu_applic if float(dim(c, "customer_understood")["score"]) <= 2)
+
+    # Pet: relevant (applicable) vs well acknowledged (score >= 4)
+    pet_relevant = [c for c in scored if dim(c, "pet_acknowledged").get("applicable") and dim(c, "pet_acknowledged").get("score") is not None]
+    pet_ack_well = sum(1 for c in pet_relevant if float(dim(c, "pet_acknowledged")["score"]) >= 4)
+
+    # Weakest dimension by average
+    dim_avgs = {}
+    for d in DIMENSIONS:
+        vals = [float(dim(c, d["key"])["score"]) for c in scored
+                if dim(c, d["key"]).get("applicable") and dim(c, d["key"]).get("score") is not None]
+        if vals:
+            dim_avgs[d["label"]] = round(sum(vals) / len(vals), 2)
+    weakest = min(dim_avgs.items(), key=lambda kv: kv[1]) if dim_avgs else None
+
+    # Top coaching themes
+    themes = {}
+    for c in scored:
+        t = ((c.get("scores") or {}).get("coaching_tag") or "").strip()
+        if t:
+            themes[t] = themes.get(t, 0) + 1
+    top_themes = sorted(themes.items(), key=lambda kv: kv[1], reverse=True)[:3]
+
+    # --- Narrative ---
+    parts = []
+    if avg is not None:
+        parts.append(f"Across {n} scored call{'s' if n != 1 else ''}, the average HUFT Care Score was {avg}/5.")
+    else:
+        parts.append(f"Across {n} scored call{'s' if n != 1 else ''} in this period.")
+    if cu_applic:
+        parts.append(f"Customer understanding was weak in {_pct(cu_weak, len(cu_applic)):.0f}% of {len(cu_applic)} applicable calls (a sign customers had to re-explain).")
+    if pet_relevant:
+        parts.append(f"Pet comfort or wellbeing was relevant in {len(pet_relevant)} call{'s' if len(pet_relevant) != 1 else ''} and well acknowledged in {_pct(pet_ack_well, len(pet_relevant)):.0f}% of them.")
+    parts.append(f"Escalation was needed in {_pct(esc, n):.0f}% and an unsupported promise was made in {_pct(promise, n):.0f}% of the {n} calls.")
+    unresolved = res_counts["unresolved"] + res_counts["partially_resolved"] + res_counts["unclear"]
+    parts.append(f"{_pct(unresolved, n):.0f}% of calls were not fully resolved.")
+    if weakest:
+        parts.append(f"The weakest care area was {weakest[0]} (avg {weakest[1]}/5).")
+    if top_themes:
+        parts.append("Top coaching themes: " + ", ".join(f"{t} ({c})" for t, c in top_themes) + ".")
+
+    return {
+        "n": n,
+        "narrative": " ".join(parts),
+        "metrics": {
+            "avg": avg,
+            "escalation_pct": _pct(esc, n), "escalation_n": esc,
+            "unsupported_pct": _pct(promise, n), "unsupported_n": promise,
+            "not_resolved_pct": _pct(unresolved, n),
+            "cu_weak_pct": _pct(cu_weak, len(cu_applic)) if cu_applic else 0,
+            "cu_applic": len(cu_applic),
+            "pet_relevant": len(pet_relevant),
+            "pet_ack_pct": _pct(pet_ack_well, len(pet_relevant)) if pet_relevant else 0,
+            "weakest": weakest, "top_themes": top_themes,
+            "resolution": res_counts,
+        },
+    }

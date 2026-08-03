@@ -15,8 +15,8 @@
       <small>Customer Care · Care Intelligence</small>
     </div>
     <nav>
-      <a href="{{ url_for('index') }}" class="{{ 'active' if request.endpoint == 'index' else '' }}">Upload</a>
-      <a href="{{ url_for('overview') }}" class="{{ 'active' if request.endpoint == 'overview' else '' }}">Overview</a>
+      <a href="{{ url_for('index') }}" class="{{ 'active' if request.endpoint == 'index' else '' }}">{{ 'Upload' if session.get('role') == 'manager' else 'My Calls' }}</a>
+      {% if session.get('role') == 'manager' %}<a href="{{ url_for('overview') }}" class="{{ 'active' if request.endpoint == 'overview' else '' }}">Dashboard</a>{% endif %}
       {% if session.get('authed') %}<a href="{{ url_for('logout') }}" class="logout">Log out</a>{% endif %}
     </nav>
   </div>

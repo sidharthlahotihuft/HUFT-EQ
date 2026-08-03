@@ -86,3 +86,26 @@ def _normalize(row):
     row = dict(row)
     row["scores"] = row.get("scores_json") or {}
     return row
+
+
+def purge_older_than(days):
+    """Data-retention: permanently delete calls created more than `days` ago,
+    along with their audio files in Storage. Returns the number of calls deleted.
+    Called by the scheduled /api/cleanup job."""
+    from datetime import datetime, timedelta, timezone
+    import audio_storage
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    client = get_client()
+    res = client.table("calls").select("id, filename").lt("created_at", cutoff).execute()
+    rows = res.data or []
+    deleted = 0
+    for r in rows:
+        if r.get("filename"):
+            try:
+                audio_storage.delete_object(r["filename"])
+            except Exception as e:  # noqa: BLE001 - keep going even if one audio file is gone
+                print(f"[retention] could not delete audio {r['filename']}: {e}")
+        client.table("calls").delete().eq("id", r["id"]).execute()
+        deleted += 1
+    return deleted

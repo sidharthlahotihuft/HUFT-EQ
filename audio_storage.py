@@ -34,3 +34,11 @@ def download_to_path(storage_path, dest_path):
     with open(dest_path, "wb") as f:
         f.write(data)
     return dest_path
+
+
+def delete_object(storage_path):
+    """Permanently remove an audio file from Supabase Storage (used by the
+    retention job to delete recordings past their retention window)."""
+    from storage import get_client
+
+    return get_client().storage.from_(BUCKET).remove([storage_path])

@@ -23,6 +23,7 @@ Local dev:
     python app.py
 Then open http://localhost:5001
 """
+import json
 import os
 import tempfile
 
@@ -31,6 +32,7 @@ from flask import Flask, jsonify, redirect, render_template, request, session, u
 from werkzeug.security import check_password_hash
 
 import audio_storage
+import pii
 import scoring
 import speaker_label
 import storage
@@ -46,11 +48,15 @@ app.secret_key = os.environ.get("SECRET_KEY", "huft-care-portal-dev-secret-chang
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
 
-# --- Authentication ---------------------------------------------------------
-# Single admin login. Credentials come from env; the defaults below let it work
-# out of the box. The password default is a hash (not plaintext), so no secret
-# is committed. Override in .env / Vercel with ADMIN_EMAIL and either
-# ADMIN_PASSWORD (plain) or ADMIN_PASSWORD_HASH (a werkzeug hash).
+# --- Authentication & roles -------------------------------------------------
+# Roles: "manager" sees every call and the dashboard; "agent" sees only their
+# own calls. Users come from the USERS_JSON env var (a JSON list); if unset, a
+# single default admin manager is used so the app works out of the box.
+#
+# USERS_JSON example (set in .env / Vercel):
+#   [{"email":"manager@headsupfortails.com","password":"...","role":"manager"},
+#    {"email":"akhila@headsupfortails.com","password":"...","role":"agent","agent_name":"Akhila"}]
+# Use "password_hash" (a werkzeug hash) instead of "password" to avoid plaintext.
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@headsupfortails.com").strip().lower()
 _DEFAULT_PW_HASH = (
     "scrypt:32768:8:1$7FB5XSMO8fZZLM4k$b76aaeb390c7e293be82b87b9478543dee3bbe9"
@@ -59,17 +65,75 @@ _DEFAULT_PW_HASH = (
 ADMIN_PASSWORD_HASH = os.environ.get("ADMIN_PASSWORD_HASH", _DEFAULT_PW_HASH)
 ADMIN_PASSWORD_PLAIN = os.environ.get("ADMIN_PASSWORD")  # optional plaintext override
 
-# Endpoints reachable without logging in.
-PUBLIC_ENDPOINTS = {"login", "static"}
+
+def _load_users():
+    raw = os.environ.get("USERS_JSON")
+    if raw:
+        try:
+            out = []
+            for u in json.loads(raw):
+                out.append({
+                    "email": (u.get("email") or "").strip().lower(),
+                    "password": u.get("password"),
+                    "password_hash": u.get("password_hash"),
+                    "role": (u.get("role") or "agent").strip().lower(),
+                    "agent_name": (u.get("agent_name") or "").strip(),
+                })
+            out = [u for u in out if u["email"]]
+            if out:
+                return out
+        except Exception as e:  # noqa: BLE001
+            print(f"[auth] USERS_JSON parse failed, using default admin: {e}")
+    return [{
+        "email": ADMIN_EMAIL,
+        "password": ADMIN_PASSWORD_PLAIN,
+        "password_hash": None if ADMIN_PASSWORD_PLAIN else ADMIN_PASSWORD_HASH,
+        "role": "manager", "agent_name": "",
+    }]
 
 
-def _password_ok(pw):
-    if ADMIN_PASSWORD_PLAIN:
-        return pw == ADMIN_PASSWORD_PLAIN
-    try:
-        return check_password_hash(ADMIN_PASSWORD_HASH, pw)
-    except Exception:  # noqa: BLE001
-        return False
+USERS = _load_users()
+
+# Endpoints reachable without a session (each does its own checks where needed).
+PUBLIC_ENDPOINTS = {"login", "static", "api_cleanup"}
+
+
+def _find_user(email):
+    email = (email or "").strip().lower()
+    for u in USERS:
+        if u["email"] == email:
+            return u
+    return None
+
+
+def _user_password_ok(u, pw):
+    if u.get("password"):
+        return pw == u["password"]
+    if u.get("password_hash"):
+        try:
+            return check_password_hash(u["password_hash"], pw)
+        except Exception:  # noqa: BLE001
+            return False
+    return False
+
+
+def is_manager():
+    return session.get("role") == "manager"
+
+
+def _visible_calls(calls):
+    """Managers see all; agents see only calls assigned to their agent_name."""
+    if is_manager():
+        return calls
+    an = (session.get("agent_name") or "").strip().lower()
+    return [c for c in calls if (c.get("agent_name") or "").strip().lower() == an]
+
+
+def _can_view_call(call):
+    if is_manager():
+        return True
+    an = (session.get("agent_name") or "").strip().lower()
+    return (call.get("agent_name") or "").strip().lower() == an
 
 
 @app.before_request
@@ -95,9 +159,12 @@ def login():
     if request.method == "POST":
         email = (request.form.get("email") or "").strip().lower()
         pw = request.form.get("password") or ""
-        if email == ADMIN_EMAIL and _password_ok(pw):
+        u = _find_user(email)
+        if u and _user_password_ok(u, pw):
             session["authed"] = True
-            session["email"] = email
+            session["email"] = u["email"]
+            session["role"] = u["role"]
+            session["agent_name"] = u.get("agent_name", "")
             return redirect(_safe_next(request.args.get("next")))
         error = "Invalid email or password."
     return render_template("login.html", error=error)
@@ -118,7 +185,7 @@ def allowed_file(filename):
 
 @app.route("/")
 def index():
-    calls = storage.list_calls()
+    calls = _visible_calls(storage.list_calls())
     return render_template(
         "index.html", calls=calls, params=scoring.DIMENSIONS,
         supabase_url=SUPABASE_URL, supabase_anon_key=SUPABASE_ANON_KEY,
@@ -153,6 +220,10 @@ def api_calls():
         return jsonify({"error": "Missing storage_path or original_name."}), 400
 
     agent_name = (data.get("agent_name") or "").strip() or "Unassigned"
+    # An agent can only file calls under their own name (so they see them, and
+    # can't attribute a call to someone else).
+    if not is_manager() and session.get("agent_name"):
+        agent_name = session["agent_name"]
     call_date = (data.get("call_date") or "").strip()
     call_topic = (data.get("call_topic") or "").strip()
 
@@ -190,6 +261,10 @@ def api_process_transcribe(call_id):
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
+        # Mask PII (phone, email, card/account, PIN) BEFORE any further AI or
+        # storage, so sensitive customer data never reaches the scoring model
+        # or the manager view in the clear.
+        transcript = pii.mask_pii(transcript)
         # Ensure the transcript is split into "HUFT Agent:" / "Customer:" turns.
         # Deepgram already labels speakers; for plain Whisper this adds labels
         # via an LLM pass (verbatim, non-destructive). No-op without an LLM key.
@@ -237,6 +312,8 @@ def report_card(call_id):
     call = storage.get_call(call_id)
     if not call:
         return "Call not found", 404
+    if not _can_view_call(call):
+        return "You don't have access to this call.", 403
 
     result = call.get("scores") or {}
     dims = result.get("dimensions") or {}
@@ -247,7 +324,8 @@ def report_card(call_id):
         applicable = v.get("applicable", True)
         rows.append({
             "key": d["key"], "label": d["label"], "weight": d["weight"],
-            "question": d["question"], "score": score, "applicable": applicable,
+            "question": d["question"], "plain": d.get("plain", d["question"]),
+            "score": score, "applicable": applicable,
             "confidence": v.get("confidence"),
             "band": scoring.band_for_score(score) if applicable else "na",
             "evidence": v.get("evidence", ""),
@@ -266,6 +344,8 @@ def update_call(call_id):
     call = storage.get_call(call_id)
     if not call:
         return jsonify({"error": "not found"}), 404
+    if not _can_view_call(call):
+        return "You don't have access to this call.", 403
 
     result = call.get("scores") or scoring.empty_result()
     dims = result.setdefault("dimensions", {})
@@ -311,9 +391,37 @@ def update_call(call_id):
     return redirect(url_for("report_card", call_id=call_id))
 
 
+def _call_day(call):
+    """The date a call belongs to for filtering: its call_date, else the day it
+    was created. Returns a 'YYYY-MM-DD' string or ''."""
+    d = (call.get("call_date") or "").strip()
+    if d:
+        return d[:10]
+    ca = (call.get("created_at") or "").strip()
+    return ca[:10] if ca else ""
+
+
 @app.route("/overview")
 def overview():
+    # The team dashboard is manager-only; agents are sent to their own calls.
+    if not is_manager():
+        return redirect(url_for("index"))
     calls = [c for c in storage.list_calls() if c["status"] == "done"]
+
+    # --- Time filter (Manager dashboard) ---
+    date_from = (request.args.get("from") or "").strip()
+    date_to = (request.args.get("to") or "").strip()
+    if date_from or date_to:
+        def in_range(c):
+            day = _call_day(c)
+            if not day:
+                return False
+            if date_from and day < date_from:
+                return False
+            if date_to and day > date_to:
+                return False
+            return True
+        calls = [c for c in calls if in_range(c)]
 
     param_avgs = []
     for d in scoring.DIMENSIONS:
@@ -335,10 +443,37 @@ def overview():
     # "Pass" = displayed score >= 3.5 (Strong or better) on the 1-5 scale.
     pass_count = sum(1 for c in calls if (c["total_score"] or 0) >= 3.5)
 
+    summary = scoring.manager_summary(calls)
+
     return render_template(
         "overview.html", calls=ranked, param_avgs=param_avgs, avg_total=avg_total,
         pass_count=pass_count, total_calls=len(calls), max_score=scoring.MAX_SCORE,
+        summary=summary, date_from=date_from, date_to=date_to,
     )
+
+
+RETENTION_DAYS = int(os.environ.get("RETENTION_DAYS", "90"))
+CRON_SECRET = os.environ.get("CRON_SECRET", "")
+
+
+@app.route("/api/cleanup", methods=["GET", "POST"])
+def api_cleanup():
+    """Data-retention job: delete calls (and their audio) older than
+    RETENTION_DAYS. Authorised either by a logged-in manager, or by a cron
+    secret (Vercel Cron sends 'Authorization: Bearer <CRON_SECRET>'). This is
+    the automated deletion policy — 90 days by default."""
+    authed_manager = session.get("authed") and is_manager()
+    supplied = (request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+                or request.headers.get("x-cron-secret", "").strip()
+                or request.args.get("secret", "").strip())
+    cron_ok = bool(CRON_SECRET) and supplied == CRON_SECRET
+    if not (authed_manager or cron_ok):
+        return jsonify({"error": "unauthorized"}), 403
+    try:
+        deleted = storage.purge_older_than(RETENTION_DAYS)
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"deleted": deleted, "retention_days": RETENTION_DAYS})
 
 
 if __name__ == "__main__":
