@@ -102,7 +102,17 @@
 
 <div class="card">
   <h2>Average by Care Dimension</h2>
-  <canvas id="paramChart" height="110"></canvas>
+  <div class="dimbars">
+    {% for p in param_avgs %}
+    <div class="dimbar">
+      <div class="dimbar-label">{{ p.label }}</div>
+      <div class="dimbar-track">
+        <div class="dimbar-fill fill-{{ p.band }}" style="width: {{ (p.avg / (max_score or 5) * 100)|round(1) }}%;"></div>
+      </div>
+      <div class="dimbar-val">{{ p.avg }}<span style="color:var(--gray-soft);font-size:11px;">/{{ max_score|int }}</span></div>
+    </div>
+    {% endfor %}
+  </div>
 </div>
 
 <div class="card">
@@ -122,22 +132,19 @@
   </table>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
-<script>
-  const labels = {{ param_avgs|map(attribute='label')|list|tojson }};
-  const avgs = {{ param_avgs|map(attribute='avg')|list|tojson }};
-  const pcts = {{ param_avgs|map(attribute='pct')|list|tojson }};
-  const colors = pcts.map(p => p >= 80 ? '#1c6b32' : (p >= 50 ? '#8a6300' : '#a3221a'));
-  new Chart(document.getElementById('paramChart'), {
-    type: 'bar',
-    data: { labels: labels, datasets: [{ label: 'Avg score (1–5)', data: avgs, backgroundColor: colors }] },
-    options: {
-      responsive: true,
-      plugins: { legend: { display: false } },
-      scales: { y: { beginAtZero: true, max: 5 }, x: { ticks: { autoSkip: false, maxRotation: 30, minRotation: 0, font: { size: 11 } } } }
-    }
-  });
-</script>
+<style>
+  .dimbars { display:flex; flex-direction:column; gap:12px; }
+  .dimbar { display:grid; grid-template-columns:180px 1fr 60px; align-items:center; gap:14px; }
+  .dimbar-label { font-size:13px; font-weight:600; color:var(--ink); }
+  .dimbar-track { background:var(--gray-light); border-radius:999px; height:16px; overflow:hidden; }
+  .dimbar-fill { height:100%; border-radius:999px; min-width:2px; transition:width .4s ease; }
+  .fill-good { background:var(--good); }
+  .fill-warn { background:var(--warn); }
+  .fill-bad  { background:var(--bad); }
+  .fill-na   { background:var(--gray-soft); }
+  .dimbar-val { font-size:13px; font-weight:700; color:var(--navy); text-align:right; }
+  @media (max-width:640px){ .dimbar{ grid-template-columns:120px 1fr 50px; } }
+</style>
 
 {% endif %}
 {% endblock %}
