@@ -321,7 +321,10 @@ def api_process_score(call_id):
             "call_date": call.get("call_date"),
             "call_topic": call.get("call_topic"),
         }
-        result, method = scoring.score_transcript(call["transcript"], meta)
+        # Learn from past manager edits: feed the per-dimension human-override
+        # bias into the scorer so it corrects where it's historically been wrong.
+        calibration = scoring.calibration_summary(storage.list_calls())
+        result, method = scoring.score_transcript(call["transcript"], meta, calibration=calibration)
         # display_score is 1-5 (or None when evidence is insufficient); rating_band is the label.
         total = result.get("display_score")
         band = result.get("rating_band")
@@ -479,12 +482,15 @@ def overview():
     pass_count = sum(1 for c in calls if (c["total_score"] or 0) >= 3.5)
 
     summary = scoring.manager_summary(calls)
+    # Scoring calibration is learned from ALL human-reviewed calls (not just the
+    # filtered window), so it reflects the full override history.
+    calibration = scoring.calibration_summary(storage.list_calls())
 
     return render_template(
         "overview.html", calls=ranked, param_avgs=param_avgs, avg_total=avg_total,
         pass_count=pass_count, total_calls=len(calls), max_score=scoring.MAX_SCORE,
         summary=summary, date_from=date_from, date_to=date_to,
-        excluded_calls=excluded_calls,
+        excluded_calls=excluded_calls, calibration=calibration,
     )
 
 
