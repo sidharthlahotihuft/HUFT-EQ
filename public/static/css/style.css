@@ -148,6 +148,12 @@ textarea { resize: vertical; }
 .btn.secondary { background: #fff; color: var(--navy); border: 1px solid var(--border); box-shadow: none; }
 .btn.secondary:hover { background: var(--gray-light); border-color: #ddd6cd; }
 .btn.block { width: 100%; justify-content: center; padding: 12px; }
+.btn-remove {
+  display: inline-flex; align-items: center; background: #fff; color: var(--bad-text);
+  border: 1px solid var(--border); padding: 8px 14px; border-radius: var(--radius-sm);
+  font-size: 13px; font-weight: 700; cursor: pointer; margin-left: 6px; transition: background .15s, border-color .15s;
+}
+.btn-remove:hover { background: var(--bad-bg); border-color: #f2c9c5; }
 
 /* ---------- Tables ---------- */
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; }

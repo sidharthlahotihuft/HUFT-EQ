@@ -1,0 +1,39 @@
+HUFT Agent: Head Up For Tails, morning. This is A.khila. How may I help you?
+Customer: Hello. So I ordered, like, four days ago and I tried to track my order and it says sale delivery. I'm not sure why. Can you please check?
+HUFT Agent: Ok, this is nindrita I'm speaking with?
+Customer: Right.
+HUFT Agent: Your order was based on 14 for a few treats and a bowl and other items as well. So you have not received, have you received any of the shipments yet?
+Customer: No nothing, never got anything.
+HUFT Agent: All these for you, so sorry for the delay.
+Customer: That's ok. Do you want the order ID?
+HUFT Agent: I have the details. I think you have only one order from this number, right?
+Customer: I think I've ordered two of them. I tried canceling one, but I couldn't figure it out. Because I gave the wrong contact information. That's why I'm busy.
+HUFT Agent: Ok. I'm taking all the shipments for you. Actually, your order is supposed to reach you in three separate shipments. So one shipment has reached koyaNa baTora yesterday, which was the hub sausage in real chicken variant that is coming separately. It has pack of three of those treats and there is another shipment which has reached koeM baTora and as per the courier partner, the delivery was failed. May I know if you received any calls from the courier partner regarding the charges?
+Customer: No, I haven't covered No. The
+HUFT Agent: Ok ok. So that is pending. So these two shipments should be delivered today. I'll raise a request with the courier partner for this and the last shipment which has the sArA se sArA collar as well as the exercise yaki that is in transit and it is currently in Mumbai. So that will additionally take two days. Rest of the shipments can be done today for which I'll raise a request with the team.
+Customer: Yeah and can you let me know what contact number is given on the order?
+HUFT Agent: Sure. I want to It's the same number from which you are calling.
+Customer: Ok ok, that's the right one. Ok, fine.
+HUFT Agent: Ok ma'am. And can you please cancel the other one if you could?
+Customer: You have the order ID so that I can help you with cancellation?
+HUFT Agent: I am not sure about that. I didn't use my right email address too.
+Customer: Ok, so both the email address and mobile number were wrong?
+HUFT Agent: Yes.
+Customer: Ok Then it is very challenging to check.
+HUFT Agent: Ok, no worries. Free from the same name?
+Customer: Yes, from the same name.
+HUFT Agent: Ok. Let me try to check this from the link. Please be online. Was it a prepaid order or a cash on delivery?
+Customer: No no, that was cash on delivery.
+HUFT Agent: Ok, I'll quickly check that, just one moment. Ok, I found the order. It was also placed on August 14?
+Customer: Yeah, I think I placed it on, I'm not sure what's the date.
+HUFT Agent: Ok, the email address provided is namratAchaMdrashekha48@therateGmail.com. Is it you ok, I can help you?
+Customer: Not the one that I'm currently using. You can cancel that order.
+HUFT Agent: Ok, I'll request the team to process return for these items.
+Customer: Ok and two of them I'll be getting it today, right?
+HUFT Agent: Should be, they have not been out for delivery yet. I'll request the team to arrange the delivery today.
+Customer: Ok ok perfect.
+HUFT Agent: Ok, yeah sir. Anything else you need my help?
+Customer: No no, that's it for the day. Yeah.
+HUFT Agent: Ok, you have a good
+Customer: Thank you very much.
+HUFT Agent: You do have a good day.

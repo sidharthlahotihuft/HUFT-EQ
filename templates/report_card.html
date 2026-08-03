@@ -21,6 +21,22 @@
   .chip { display:inline-block; background:var(--blue-light); color:var(--blue); padding:3px 10px; border-radius:999px; font-size:12px; font-weight:600; }
   .twocol { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
   @media (max-width:720px){ .twocol{ grid-template-columns:1fr; } .kv{ grid-template-columns:120px 1fr; } }
+  /* Six care areas summary */
+  .care-areas { display:grid; grid-template-columns:1fr 1fr; gap:10px 22px; }
+  .care-area { display:flex; align-items:flex-start; gap:12px; padding:6px 0; }
+  .ca-badge { flex-shrink:0; width:46px; height:38px; border-radius:9px; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:16px; }
+  .ca-badge .ca-den { font-size:10px; font-weight:600; opacity:.7; margin-left:1px; }
+  .ca-good { background:var(--good-bg); color:var(--good-text); }
+  .ca-warn { background:var(--warn-bg); color:var(--warn-text); }
+  .ca-bad  { background:var(--bad-bg);  color:var(--bad-text); }
+  .ca-na   { background:var(--gray-light); color:var(--gray-soft); font-size:11px; font-weight:700; }
+  .ca-name { font-weight:700; color:var(--navy); font-size:13.5px; }
+  .ca-tick { color:var(--good); font-weight:800; margin-left:4px; }
+  .ca-q { color:var(--gray); font-size:12.5px; line-height:1.4; }
+  .flag { display:inline-block; padding:1px 8px; border-radius:999px; font-size:11px; font-weight:700; }
+  .flag-on { background:var(--bad-bg); color:var(--bad-text); }
+  .flag-off { background:var(--good-bg); color:var(--good-text); }
+  @media (max-width:720px){ .care-areas{ grid-template-columns:1fr; } }
 </style>
 {% endblock %}
 {% block content %}
@@ -103,6 +119,28 @@
   </div>
 </div>
 
+<div class="card">
+  <h2>The six care areas</h2>
+  <div class="care-areas">
+    {% for row in rows %}
+    <div class="care-area">
+      <div class="ca-badge {{ 'ca-na' if not row.applicable else ('ca-' + row.band) }}">
+        {% if not row.applicable %}N/A
+        {% elif row.score is not none %}{{ '%g'|format(row.score) }}<span class="ca-den">/5</span>
+        {% else %}—{% endif %}
+      </div>
+      <div class="ca-body">
+        <div class="ca-name">
+          {{ loop.index }}. {{ row.label }}
+          {% if row.applicable and row.score is not none and row.score >= 4 %}<span class="ca-tick">✓</span>{% endif %}
+        </div>
+        <div class="ca-q">{{ row.plain }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
 <div class="twocol">
   <div class="card">
     <h2>What went well</h2>
@@ -124,6 +162,14 @@
   <h2>Resolution, policy &amp; commitments</h2>
   <div class="kv">
     <b>Resolution status</b><span>{{ result.resolution_status or '—' }}</span>
+    <b>Escalation needed</b><span>
+      {% if result.escalation_needed and result.escalation_needed.answer == 'yes' %}<span class="flag flag-on">Yes</span> {{ result.escalation_needed.reason }}
+      {% elif result.escalation_needed and result.escalation_needed.answer == 'no' %}<span class="flag flag-off">No</span>
+      {% else %}—{% endif %}</span>
+    <b>Unsupported promise</b><span>
+      {% if result.unsupported_promise and result.unsupported_promise.answer == 'yes' %}<span class="flag flag-on">Yes</span> {{ result.unsupported_promise.note }}
+      {% elif result.unsupported_promise and result.unsupported_promise.answer == 'no' %}<span class="flag flag-off">No</span>
+      {% else %}—{% endif %}</span>
     <b>Policy check</b><span>{{ result.policy_check.status or '—' }}{% if result.policy_check.note %} — {{ result.policy_check.note }}{% endif %}</span>
     <b>Failure attribution</b><span>{{ result.failure_attribution or '—' }}</span>
   </div>

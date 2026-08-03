@@ -88,6 +88,17 @@ def _normalize(row):
     return row
 
 
+def set_excluded(call_id, excluded):
+    """Soft-remove a call from the dashboard and scoring aggregates (reversible).
+    Stored as scores_json.excluded so no schema change is needed; the call and
+    its report card are kept, just left out of team stats."""
+    res = get_client().table("calls").select("scores_json").eq("id", call_id).execute()
+    rows = res.data or []
+    sj = (rows[0].get("scores_json") if rows else None) or {}
+    sj["excluded"] = bool(excluded)
+    get_client().table("calls").update({"scores_json": sj}).eq("id", call_id).execute()
+
+
 def purge_older_than(days):
     """Data-retention: permanently delete calls created more than `days` ago,
     along with their audio files in Storage. Returns the number of calls deleted.

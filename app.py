@@ -406,7 +406,15 @@ def overview():
     # The team dashboard is manager-only; agents are sent to their own calls.
     if not is_manager():
         return redirect(url_for("index"))
-    calls = [c for c in storage.list_calls() if c["status"] == "done"]
+    # Only include calls scored with the current 6-dimension model (they carry a
+    # "dimensions" block). Legacy calls scored on the old 0-100 rubric are
+    # excluded so the 1-5 averages and bands aren't polluted.
+    all_current = [c for c in storage.list_calls()
+                   if c["status"] == "done" and (c.get("scores") or {}).get("dimensions")]
+    # Manager-removed calls are held out of the dashboard AND the scoring
+    # aggregates, but kept so they can be restored.
+    excluded_calls = [c for c in all_current if (c.get("scores") or {}).get("excluded")]
+    calls = [c for c in all_current if not (c.get("scores") or {}).get("excluded")]
 
     # --- Time filter (Manager dashboard) ---
     date_from = (request.args.get("from") or "").strip()
@@ -449,7 +457,18 @@ def overview():
         "overview.html", calls=ranked, param_avgs=param_avgs, avg_total=avg_total,
         pass_count=pass_count, total_calls=len(calls), max_score=scoring.MAX_SCORE,
         summary=summary, date_from=date_from, date_to=date_to,
+        excluded_calls=excluded_calls,
     )
+
+
+@app.route("/call/<int:call_id>/exclude", methods=["POST"])
+def exclude_call(call_id):
+    """Manager: remove a call from the dashboard + scoring aggregates (or restore)."""
+    if not is_manager():
+        return "Managers only.", 403
+    excluded = request.form.get("excluded", "1") == "1"
+    storage.set_excluded(call_id, excluded)
+    return redirect(url_for("overview"))
 
 
 RETENTION_DAYS = int(os.environ.get("RETENTION_DAYS", "90"))
