@@ -34,19 +34,34 @@ def init_db():
     return None
 
 
-def create_call(filename, original_name, agent_name, call_date, call_topic):
+def create_call(filename, original_name, agent_name, call_date, call_topic, content_hash=None):
     row = {
         "filename": filename,
         "original_name": original_name,
         "agent_name": agent_name,
         "call_date": call_date or None,
         "call_topic": call_topic,
+        "content_hash": content_hash,
         "status": "uploaded",
         "status_message": "Uploaded - ready to transcribe.",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     res = get_client().table("calls").insert(row).execute()
     return res.data[0]["id"]
+
+
+def find_by_hash(content_hash):
+    """Return an existing call with the same audio fingerprint, or None. Used to
+    detect and skip duplicate uploads (same recording uploaded twice)."""
+    if not content_hash:
+        return None
+    try:
+        res = (get_client().table("calls").select("id, original_name, status")
+               .eq("content_hash", content_hash).limit(1).execute())
+    except Exception:  # noqa: BLE001 - e.g. column not created yet -> treat as no match
+        return None
+    rows = res.data or []
+    return rows[0] if rows else None
 
 
 def update_status(call_id, status, message=""):

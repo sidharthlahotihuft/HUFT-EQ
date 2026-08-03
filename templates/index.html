@@ -56,7 +56,7 @@
 </div>
 
 <div class="card">
-  <h2>Recent Calls</h2>
+  <h2>All Calls <span style="font-weight:400;color:var(--gray-soft);font-size:12px;">({{ calls|length }})</span></h2>
   {% if calls %}
   <table>
     <thead>
@@ -124,19 +124,35 @@ function addRow(name) {
   const st = document.createElement('div'); st.className = 'prog-status busy'; st.textContent = 'Queued…';
   row.appendChild(nm); row.appendChild(st);
   document.getElementById('progress').appendChild(row);
+  function link(callId, label) {
+    const a = document.createElement('a'); a.className = 'btn secondary'; a.href = '/call/' + callId;
+    a.textContent = label; a.style.marginLeft = '10px'; row.appendChild(a);
+  }
   return {
     set(text, cls) { st.textContent = text; st.className = 'prog-status ' + (cls || 'busy'); },
-    done(callId) {
-      st.textContent = 'Done'; st.className = 'prog-status done';
-      const a = document.createElement('a'); a.className = 'btn secondary'; a.href = '/call/' + callId;
-      a.textContent = 'View'; a.style.marginLeft = '10px'; row.appendChild(a);
-    },
+    done(callId) { st.textContent = 'Done'; st.className = 'prog-status done'; link(callId, 'View'); },
+    dupe(callId) { st.textContent = 'Duplicate — skipped'; st.className = 'prog-status err'; link(callId, 'View existing'); },
   };
+}
+
+async function sha256(file) {
+  const buf = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 // Each file is processed end-to-end (upload -> transcribe -> score) before the
 // next, so a large batch doesn't hammer the transcription/scoring APIs at once.
 async function processFile(file, meta, row) {
+  // Fingerprint the audio and skip if this exact recording was uploaded before.
+  row.set('Checking for duplicate…');
+  const hash = await sha256(file);
+  const pre = await (await fetch('/api/check-duplicate', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content_hash: hash }),
+  })).json();
+  if (pre.duplicate) { row.dupe(pre.call_id); return 'dup'; }
+
   row.set('Requesting upload slot…');
   const urlData = await (await fetch('/api/upload-url', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -152,12 +168,13 @@ async function processFile(file, meta, row) {
   const callRes = await fetch('/api/calls', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      storage_path: urlData.path, original_name: file.name,
+      storage_path: urlData.path, original_name: file.name, content_hash: hash,
       agent_name: meta.agent_name, call_date: meta.call_date, call_topic: meta.call_topic,
     }),
   });
   const callData = await callRes.json();
   if (!callRes.ok) throw new Error(callData.error || 'Could not create call record.');
+  if (callData.duplicate) { row.dupe(callData.call_id); return 'dup'; }
   const callId = callData.call_id;
 
   row.set('Transcribing…');

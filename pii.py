@@ -18,6 +18,7 @@ Deepgram's own redaction (redact=pci,pii,numbers) at the API layer.
 import os
 import re
 
+MASK = "****"
 _EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 # A run of 6+ digits, allowing spaces/dashes between them (e.g. "9876 543 210").
 _DIGIT_RUN = re.compile(r"(?<!\w)(\+?\d[\d\s-]{4,}\d)(?!\w)")
@@ -26,24 +27,19 @@ _DIGIT_RUN = re.compile(r"(?<!\w)(\+?\d[\d\s-]{4,}\d)(?!\w)")
 def _classify_digits(raw):
     digits = re.sub(r"\D", "", raw)
     n = len(digits)
-    if n >= 12 and n <= 19:
-        return "[card/account]"      # card or bank account number
-    if n == 10 or (11 <= n <= 12 and (digits.startswith("0") or digits.startswith("91"))):
-        return "[phone]"             # Indian mobile, with/without country code
-    if n == 6:
-        return "[pincode]"           # Indian PIN code
     if n >= 6:
-        return "[number]"            # other long number (kept generic)
-    return raw                        # short — leave (e.g. small quantities)
+        return MASK                   # phone / card / account / PIN / long number
+    return raw                         # short (2-5 digits) — quantities, years, etc.
 
 
 def mask_pii(text):
-    """Return the transcript with emails and sensitive number sequences masked.
-    Speaker labels ('HUFT Agent:' / 'Customer:') and ordinary words are untouched."""
+    """Return the transcript with emails and sensitive number sequences masked as
+    ****. Speaker labels and ordinary words are untouched. (Names/addresses are
+    additionally redacted by the LLM cleanup pass in speaker_label.py.)"""
     if not text:
         return text
     if os.environ.get("MASK_PII", "1").strip().lower() not in ("1", "true", "yes", "on"):
         return text
-    text = _EMAIL.sub("[email]", text)
+    text = _EMAIL.sub(MASK, text)
     text = _DIGIT_RUN.sub(lambda m: _classify_digits(m.group(1)), text)
     return text

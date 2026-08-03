@@ -219,6 +219,18 @@ def api_calls():
     if not storage_path or not original_name:
         return jsonify({"error": "Missing storage_path or original_name."}), 400
 
+    # Duplicate guard: if this exact audio (same content hash) was uploaded
+    # before, don't create another record — flag it and point at the existing one.
+    content_hash = (data.get("content_hash") or "").strip() or None
+    existing = storage.find_by_hash(content_hash)
+    if existing:
+        return jsonify({
+            "duplicate": True,
+            "call_id": existing["id"],
+            "original_name": existing.get("original_name"),
+            "redirect": url_for("report_card", call_id=existing["id"]),
+        })
+
     agent_name = (data.get("agent_name") or "").strip() or "Unassigned"
     # An agent can only file calls under their own name (so they see them, and
     # can't attribute a call to someone else).
@@ -227,8 +239,22 @@ def api_calls():
     call_date = (data.get("call_date") or "").strip()
     call_topic = (data.get("call_topic") or "").strip()
 
-    call_id = storage.create_call(storage_path, original_name, agent_name, call_date, call_topic)
+    call_id = storage.create_call(storage_path, original_name, agent_name,
+                                  call_date, call_topic, content_hash=content_hash)
     return jsonify({"call_id": call_id, "redirect": url_for("report_card", call_id=call_id)})
+
+
+@app.route("/api/check-duplicate", methods=["POST"])
+def api_check_duplicate():
+    """Cheap pre-check so the browser can skip a duplicate BEFORE uploading it."""
+    data = request.get_json(silent=True) or {}
+    h = (data.get("content_hash") or "").strip()
+    existing = storage.find_by_hash(h) if h else None
+    if existing:
+        return jsonify({"duplicate": True, "call_id": existing["id"],
+                        "original_name": existing.get("original_name"),
+                        "redirect": url_for("report_card", call_id=existing["id"])})
+    return jsonify({"duplicate": False})
 
 
 @app.route("/api/status/<int:call_id>")

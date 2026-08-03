@@ -1,10 +1,15 @@
 -- Run this once in your Supabase project's SQL editor (Project -> SQL Editor -> New query).
+--
+-- ALREADY HAVE THE TABLE? Just add the duplicate-detection column:
+--   alter table calls add column if not exists content_hash text;
+--   create index if not exists calls_content_hash_idx on calls (content_hash);
 
 -- 1. Table that stores every scored call.
 create table if not exists calls (
   id bigint generated always as identity primary key,
   filename text not null,          -- Supabase Storage object path for the audio file
   original_name text not null,     -- original uploaded filename, for display
+  content_hash text,               -- SHA-256 of the audio, for duplicate detection
   agent_name text,
   call_date date,
   call_topic text,
@@ -21,6 +26,7 @@ create table if not exists calls (
 
 create index if not exists calls_created_at_idx on calls (created_at desc);
 create index if not exists calls_status_idx on calls (status);
+create index if not exists calls_content_hash_idx on calls (content_hash);
 
 -- Row Level Security stays ON with NO policies. The app only ever talks to this
 -- table using the service_role key (server-side, in storage.py), which bypasses

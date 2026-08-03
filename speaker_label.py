@@ -44,19 +44,24 @@ def _under_segmented(transcript):
 def _prompt(transcript):
     return f"""Below is a transcript of a single phone call between a HUFT
 (Head Up For Tails) customer-care AGENT and a CUSTOMER, in English, Hindi or Hinglish.
-Produce a clean, readable, turn-by-turn version.
+Produce a clean, readable, PRIVACY-SAFE, turn-by-turn version.
 
 Rules:
 - Split the conversation into turns and label each with the speaker.
 - Use exactly these labels: "HUFT Agent:" and "Customer:". One turn per line.
 - The AGENT greets, represents HUFT, verifies identity and drives the resolution.
   The CUSTOMER describes the problem or request.
-- KEEP the words. You MAY, for readability only:
-    - fix obviously garbled capitalization of names/words (e.g. "sevi" -> "Sevi",
-      "gayatri kaura" -> "Gayatri Kaur");
+- REDACT the customer's personal data so no PII remains — replace each with
+  exactly "****" (four asterisks):
+    - customer's name -> ****   (keep the agent's first name for coaching)
+    - phone number, email, full address / house / street / area, PIN code, and
+      any card / bank / account / order-tracking number -> ****.
+      Keep anything already masked as-is.
+- KEEP everything else. You MAY, for readability only:
+    - fix obviously garbled capitalization (e.g. "sevi" -> "Sevi");
     - collapse an immediately-repeated filler ("Hello. Hello. Hello." -> "Hello.").
-- Do NOT translate, summarise, reorder, or drop any substantive content, numbers,
-  commitments or details. If a number is already masked as [number]/[email], keep it.
+- Do NOT translate, summarise, reorder, or drop substantive content, commitments
+  or the nature of the issue. Only redact the personal identifiers above.
 
 Transcript:
 \"\"\"
@@ -113,13 +118,11 @@ def _sanity_ok(original, labeled):
 
 
 def ensure_labeled(transcript):
-    """Return a clean, speaker-labeled transcript. Best-effort and
-    non-destructive: returns the original if it's already clean or if labeling
-    isn't possible."""
+    """Return a clean, speaker-labeled, PII-redacted transcript. Best-effort and
+    non-destructive: runs the LLM cleanup+redaction pass whenever a key is
+    available (so customer names/addresses are removed even when Deepgram already
+    labeled cleanly). Returns the original if disabled or no LLM key is usable."""
     if not transcript:
-        return transcript
-    # Already labeled AND well-segmented -> leave it alone.
-    if is_already_labeled(transcript) and not _under_segmented(transcript):
         return transcript
     if os.environ.get("SPEAKER_LABEL", "1").strip().lower() not in ("1", "true", "yes", "on"):
         return transcript

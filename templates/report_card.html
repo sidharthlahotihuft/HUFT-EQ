@@ -228,7 +228,7 @@
                    placeholder="N/A">
           </td>
           <td class="score-cell conf">{{ (row.confidence*100)|round|int ~ '%' if row.confidence is not none else '—' }}</td>
-          <td><textarea class="evidence-input" name="evidence_{{ row.key }}" rows="2">{{ row.evidence }}</textarea></td>
+          <td><textarea class="evidence-input" name="evidence_{{ row.key }}" rows="3">{{ row.evidence }}</textarea></td>
         </tr>
         {% endfor %}
       </tbody>
@@ -245,6 +245,15 @@
   <h2>Transcript</h2>
   <div class="transcript-box" style="white-space: pre-wrap;">{{ call.transcript }}</div>
 </div>
+
+<script>
+  // Auto-size evidence boxes so the full evidence text is always visible.
+  function autosize(el) { el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; }
+  document.querySelectorAll('.evidence-input').forEach(function (el) {
+    autosize(el);
+    el.addEventListener('input', function () { autosize(el); });
+  });
+</script>
 
 {% endif %}
 {% endblock %}

@@ -214,7 +214,7 @@ tbody tr:hover td { background: #fcfaf8; }
 }
 
 /* ---------- Editable inputs ---------- */
-.evidence-input { width: 100%; border: 1px solid transparent; background: transparent; font-size: 13px; font-family: inherit; color: var(--ink); padding: 5px 7px; border-radius: 6px; transition: border-color .12s, background .12s; }
+.evidence-input { width: 100%; border: 1px solid transparent; background: transparent; font-size: 13px; line-height: 1.5; font-family: inherit; color: var(--ink); padding: 5px 7px; border-radius: 6px; overflow: hidden; transition: border-color .12s, background .12s; }
 .evidence-input:hover { background: #f8f5f2; }
 .evidence-input:focus, .score-input:focus { border-color: var(--coral); background: #fff; outline: none; box-shadow: var(--ring); }
 .score-input { width: 60px; text-align: center; border: 1px solid var(--border-soft); background: #fff; font-weight: 700; font-size: 14px; border-radius: 7px; padding: 6px; }
