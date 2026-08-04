@@ -74,14 +74,14 @@
 <div class="card">
   <h2>Ranking</h2>
   <table>
-    <thead><tr><th>#</th><th>Call</th><th>Agent</th><th>Date</th><th>Score</th><th>Band</th><th></th></tr></thead>
+    <thead><tr><th>#</th><th>Call</th><th>Agent</th><th>Call date</th><th>Analyzed</th><th>Score</th><th>Band</th><th></th></tr></thead>
     <tbody>
       {% for c in calls %}
       <tr>
         <td><span class="rank-num">{{ loop.index }}</span></td>
         <td>{{ c.original_name }}{% if c.call_topic %}<br><span style="color:var(--gray); font-size:12px;">{{ c.call_topic }}</span>{% endif %}</td>
         <td>{{ c.agent_name or '—' }}</td>
-        <td>{{ c.call_date or '—' }}</td>
+        <td>{{ c.call_date or '—' }}</td><td>{{ c.created_at[:10] if c.created_at else '—' }}</td>
         <td class="score-cell">{% if c.total_score is not none %}{{ '%.2f'|format(c.total_score) }}/{{ max_score|int }}{% else %}N/A{% endif %}</td>
         <td class="score-cell">{{ c.grade or '—' }}</td>
         <td style="white-space:nowrap;">
@@ -102,13 +102,13 @@
 <div class="card">
   <h2>Removed calls <span style="font-weight:400; color:var(--gray-soft); font-size:12px;">— held out of the dashboard &amp; scoring; restore any time</span></h2>
   <table>
-    <thead><tr><th>Call</th><th>Agent</th><th>Date</th><th>Score</th><th></th></tr></thead>
+    <thead><tr><th>Call</th><th>Agent</th><th>Call date</th><th>Analyzed</th><th>Score</th><th></th></tr></thead>
     <tbody>
       {% for c in excluded_calls %}
       <tr>
         <td>{{ c.original_name }}</td>
         <td>{{ c.agent_name or '—' }}</td>
-        <td>{{ c.call_date or '—' }}</td>
+        <td>{{ c.call_date or '—' }}</td><td>{{ c.created_at[:10] if c.created_at else '—' }}</td>
         <td class="score-cell">{% if c.total_score is not none %}{{ '%.2f'|format(c.total_score) }}/{{ max_score|int }}{% else %}N/A{% endif %}</td>
         <td style="white-space:nowrap;">
           <a class="btn secondary" href="{{ url_for('report_card', call_id=c.id) }}">View</a>

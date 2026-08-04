@@ -60,7 +60,7 @@
   {% if calls %}
   <table>
     <thead>
-      <tr><th>Call</th><th>Agent</th><th>Date</th><th>Status</th><th>Score</th><th></th></tr>
+      <tr><th>Call</th><th>Agent</th><th>Call date</th><th>Analyzed</th><th>Status</th><th>Score</th><th></th></tr>
     </thead>
     <tbody>
       {% for c in calls %}
@@ -68,6 +68,7 @@
         <td><b>{{ c.original_name }}</b>{% if c.call_topic %}<br><span style="color:var(--gray); font-size:12px;">{{ c.call_topic }}</span>{% endif %}</td>
         <td>{{ c.agent_name or '—' }}</td>
         <td>{{ c.call_date or '—' }}</td>
+        <td>{{ c.created_at[:10] if c.created_at else '—' }}</td>
         <td><span class="pill status-{{ c.status }}">{{ c.status_message or c.status }}</span></td>
         <td>{% if c.total_score is not none %}{{ '%.1f'|format(c.total_score) }}/{{ c.max_score|int }} ({{ c.grade }}){% else %}—{% endif %}</td>
         <td><a class="btn secondary" href="{{ url_for('report_card', call_id=c.id) }}">View</a></td>
